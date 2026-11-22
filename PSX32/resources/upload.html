@@ -64,7 +64,7 @@
 
   <div id="drop">
     <strong>Drop files here</strong>
-    <small>or click to choose · .chd .pbp · .cue + .bin · .iso · .m3u · BIOS scph*.bin</small>
+    <small>or click to choose · .chd .pbp · .cue + .bin · .iso · .m3u · BIOS scph*.bin · overlays .png</small>
     <input id="pick" type="file" multiple hidden>
   </div>
   <div id="space"></div>
@@ -102,7 +102,7 @@
   </div>
 </main>
 <script>
-const ACCEPT = ["cue","bin","img","iso","chd","pbp","m3u","ccd","sub","mdf","toc","cbn","exe"];
+const ACCEPT = ["cue","bin","img","iso","chd","pbp","m3u","ccd","sub","mdf","toc","cbn","exe","png"];   // png: overlays das laterais da tela
 const drop = document.getElementById("drop"), pick = document.getElementById("pick");
 const queueEl = document.getElementById("queue"), filesEl = document.getElementById("files"), spaceEl = document.getElementById("space");
 
@@ -123,7 +123,7 @@ async function refresh() {
     if (!data.files.length) { filesEl.innerHTML = '<tr><td class="empty">No files yet.</td></tr>'; return; }
     filesEl.innerHTML = "";
     for (const f of data.files) {
-      let tag = f.bios ? '<span class="tag bios">BIOS</span>' : (["cue","m3u","chd","pbp","iso"].includes(ext(f.name)) ? '<span class="tag">' + ext(f.name).toUpperCase() + '</span>' : "");
+      let tag = f.overlay ? '<span class="tag">OVERLAY</span>' : f.bios ? '<span class="tag bios">BIOS</span>' : (["cue","m3u","chd","pbp","iso"].includes(ext(f.name)) ? '<span class="tag">' + ext(f.name).toUpperCase() + '</span>' : "");
       const tr = document.createElement("tr");
       tr.innerHTML = `<td>${esc(f.name)}${tag}</td><td class="size">${fmtSize(f.size)}</td><td class="act"><button>Delete</button></td>`;
       tr.querySelector("button").onclick = async () => {

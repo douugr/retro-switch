@@ -32,6 +32,19 @@ static void bars(float x, float y, float w, float width) {
     }
 }
 
+// Laterais da tela no jogo: o plástico com frisos e as barras roxa, lilás e cinza (em pé) junto do jogo
+static void side(float x, float w, bool left) {
+    gfx::rect(x, 0, w, 720, BODY);
+    pattern(x, 0, w, 720, 1);
+    const Color cols[3] = { PURPLE, LILAC, GRAY_BAR };
+    const float bw[3] = { 13, 10, 7 };
+    float at = left ? x + w - 24 : x + 24;
+    for (int i = 0; i < 3; i++) {
+        gfx::rect(left ? at - bw[i] : at, 0, bw[i], 720, cols[i]);
+        at += left ? -(bw[i] + 4) : bw[i] + 4;
+    }
+}
+
 static void corner(float x, float y, float w, float h) { bars(x + w - 220, y + 18, 220, 10); }
 
 // Atrás do letreiro: barras da metade da tela até a borda direita
@@ -91,7 +104,7 @@ static const char *cloud_folder_of(const std::string &) { return "snes"; }   // 
 int main(int, char **) {
     AppDef d = {};
     d.name = "SNES16";
-    d.version = "0.5";
+    d.version = "0.6";
     d.base = "sdmc:/snes16";
     d.rom_exts = { "sfc", "smc", "swc", "fig", "gd3", "gd7", "dx2", "bsx" };
     d.web_port = 8716;
@@ -127,6 +140,7 @@ int main(int, char **) {
     t.logo_size = 74;
     t.row_height = 100;
     t.pattern = pattern;
+    t.side = side;
     t.corner = corner;
     t.header = header;
     t.cart = cart;

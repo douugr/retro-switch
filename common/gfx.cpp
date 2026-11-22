@@ -22,8 +22,8 @@ static float g_alpha = 1;
 struct Vtx { float x, y, u, v, r, g, b, a, l; };   // l = posição vertical na letra (gradiente cromado)
 static std::vector<Vtx> batch;
 
-static GLuint prog_ui, prog_game, prog_crt, tex_font, tex_game;
-static GLint ui_tex, ui_mode, ui_edge, ui_soft, ui_box, ui_blur, ui_stops, ui_locs, ui_nstops, game_tex, game_alpha, crt_u[16];
+static GLuint prog_ui, prog_game, prog_crt, prog_blur, tex_font, tex_game;
+static GLint ui_tex, ui_mode, ui_edge, ui_soft, ui_box, ui_blur, ui_stops, ui_locs, ui_nstops, game_tex, game_alpha, crt_u[16], blur_tex, blur_step, blur_max, blur_dim;
 static ChromeStyle chrome_style = {
     { { 1, 1, 1, 1 }, { 0.80f, 0.84f, 0.90f, 1 }, { 0.42f, 0.45f, 0.52f, 1 }, { 0.88f, 0.88f, 0.92f, 1 }, { 0.60f, 0.62f, 0.68f, 1 } },
     { 0, 0.42f, 0.5f, 0.7f, 1 }, 5, { 0.02f, 0.02f, 0.02f, 1 }, { 0, 0, 0, 0.8f }, 0.045f, 0.22f };
@@ -296,6 +296,21 @@ bool init(const char *display_font, const char *label_font) {
     game_tex = glGetUniformLocation(prog_game, "uTex");
     game_alpha = glGetUniformLocation(prog_game, "uAlpha");
 
+    // Fundo das laterais: o quadro do jogo ampliado, desfocado (25 amostras) e escurecido
+    const char *bfs =
+        "precision mediump float; varying vec2 vTex; uniform sampler2D uTex; uniform vec2 uStep; uniform vec2 uMax; uniform float uDim;\n"
+        "void main() {\n"
+        "  vec3 c = vec3(0.0);\n"
+        "  for (int y = -2; y <= 2; y++)\n"
+        "    for (int x = -2; x <= 2; x++) c += texture2D(uTex, clamp(vTex + vec2(float(x), float(y)) * uStep, vec2(0.0), uMax)).rgb;\n"
+        "  gl_FragColor = vec4(c / 25.0 * uDim, 1.0);\n"
+        "}\n";
+    prog_blur = link(gvs, bfs);
+    blur_tex = glGetUniformLocation(prog_blur, "uTex");
+    blur_step = glGetUniformLocation(prog_blur, "uStep");
+    blur_dim = glGetUniformLocation(prog_blur, "uDim");
+    blur_max = glGetUniformLocation(prog_blur, "uMax");
+
     prog_crt = link(kCrtVS, kCrtFS);
     const char *names[] = { "uTex", "uCurve", "uSrc", "uLines", "uDx", "uRect", "uHalf", "uRadius" };
     for (int i = 0; i < 8; i++) crt_u[i] = glGetUniformLocation(prog_crt, names[i]);
@@ -330,6 +345,7 @@ void shutdown() {
     glDeleteProgram(prog_ui);
     glDeleteProgram(prog_game);
     glDeleteProgram(prog_crt);
+    glDeleteProgram(prog_blur);
     glFinish();
     for (auto &f : fonts) { f.file.clear(); f.file.shrink_to_fit(); f.data = nullptr; }
     if (pl_open) { plExit(); pl_open = false; }
@@ -574,6 +590,29 @@ void upload_frame(const void *data, unsigned w, unsigned h, size_t pitch) {
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, frame_w, frame_h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, tmp.data());
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+}
+
+void draw_backdrop(float aspect, float dim) {
+    // cobre a tela inteira na largura (corta em cima e embaixo), centralizado
+    float w = VW, h = VW / (aspect > 0 ? aspect : 4.0f / 3.0f), y = (VH - h) / 2;
+    float u = frame_w / 1024.f, v = frame_h / 1024.f;
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex_game);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    for (int i = 1; i < 4; i++) glDisableVertexAttribArray(i);
+    const GLfloat q[] = { 0, y, 0, 0,  w, y, u, 0,  0, y + h, 0, v,  w, y + h, u, v };
+    glUseProgram(prog_blur);
+    glUniform1i(blur_tex, 0);
+    // passo de ~2,5 pixels do jogo entre as amostras: desfoque largo com 5x5 leituras
+    glUniform2f(blur_step, 2.5f / 1024.f, 2.5f / 1024.f);
+    glUniform1f(blur_dim, dim);
+    glUniform2f(blur_max, u - 0.5f / 1024.f, v - 0.5f / 1024.f);   // não lê fora do quadro
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 16, q);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 16, q + 2);
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
 void draw_game(float x, float y, float w, float h, int filter) {

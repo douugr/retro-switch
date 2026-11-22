@@ -14,7 +14,8 @@ namespace web {
 
 // bios_dir/is_bios: arquivos de BIOS (PSX32) vão para a pasta de sistema e aparecem marcados na lista
 bool start(const std::string &roms_dir, int port, const std::vector<std::string> &extensions,
-           const std::string &bios_dir = "", bool (*is_bios)(const std::string &) = nullptr);
+           const std::string &bios_dir = "", bool (*is_bios)(const std::string &) = nullptr,
+           const std::string &overlay_dir = "");   // .png: overlays das laterais da tela
 void stop();
 bool running();
 std::string address();          // http://192.168.1.106:8616/abcde/

@@ -12,6 +12,19 @@ static const float K = 1.25f, CELL = 22 * K;
 // Grade fina sobre o fundo (linhas alinhadas à tela: o padrão fica parado quando a lista rola)
 static void pattern(float x, float y, float w, float h, float a) { gfx::grid(x, y, w, h, CELL, rgb(0x333333, a)); }
 
+// Laterais da tela no jogo: a grade escura e as três faixas da caixa (em pé) junto da borda do jogo
+static void side(float x, float w, bool left) {
+    gfx::rect(x, 0, w, 720, rgb(0x09090a));
+    gfx::grid(x, 0, w, 720, CELL, rgb(0x333333));
+    const Color cols[3] = { rgb(0xe32924), rgb(0xf2781f), rgb(0xf7c33a) };
+    const float bw[3] = { 12, 8, 5 };
+    float at = left ? x + w - 26 : x + 26;
+    for (int i = 0; i < 3; i++) {
+        gfx::rect(left ? at - bw[i] : at, 0, bw[i], 720, cols[i]);
+        at += left ? -(bw[i] + 7) : bw[i] + 7;
+    }
+}
+
 static void corner(float x, float y, float w, float h) { gfx::stripes(x + w - 130, y, 70, 13); }
 
 // Faixas atravessando o canto direito do cabeçalho, como nas caixas de 1993
@@ -70,7 +83,7 @@ extern "C" int rf_state_native;
 int main(int, char **) {
     AppDef d = {};
     d.name = "MD16";
-    d.version = "0.5";
+    d.version = "0.6";
     d.base = "sdmc:/md16";
     d.rom_exts = { "md", "gen", "bin", "smd", "sms", "gg", "sg", "68k" };
     d.web_port = 8616;
@@ -107,6 +120,7 @@ int main(int, char **) {
     t.logo_size = 86;
     t.row_height = 92;
     t.pattern = pattern;
+    t.side = side;
     t.corner = corner;
     t.header = header;
     t.cart = cart;

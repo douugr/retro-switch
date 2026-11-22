@@ -27,6 +27,9 @@ struct Theme {
     void (*header)(float top, float h);                                         // enfeite atrás do letreiro
     void (*cart)(float x, float y, float w, float h, const std::string &badge, const std::string &title,
                  const std::string &subtitle, bool lit);
+    // Laterais da tela durante o jogo ("Screen sides: Theme art"): painel em x..x+w; left = lado esquerdo.
+    // Nulo = fundo do tema com o padrão
+    void (*side)(float x, float w, bool left) = nullptr;
 };
 
 // Um save que vai para a nuvem: arquivo local e caminho no repositório (vazio = <pasta>/<impressão digital>.srm)

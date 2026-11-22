@@ -57,7 +57,7 @@
 
   <div id="drop">
     <strong>Drop files here</strong>
-    <small>or click to choose · .md .gen .bin .smd .sms .gg .sg · patches .ips .bps</small>
+    <small>or click to choose · .md .gen .bin .smd .sms .gg .sg · patches .ips .bps · overlays .png</small>
     <input id="pick" type="file" multiple hidden>
   </div>
   <div id="queue"></div>
@@ -89,7 +89,7 @@
   </div>
 </main>
 <script>
-const ACCEPT = ["md","gen","bin","smd","sms","gg","sg","68k","ips","bps"];
+const ACCEPT = ["md","gen","bin","smd","sms","gg","sg","68k","ips","bps","png"];   // png: overlays das laterais da tela
 const drop = document.getElementById("drop"), pick = document.getElementById("pick");
 const queueEl = document.getElementById("queue"), filesEl = document.getElementById("files");
 
@@ -111,7 +111,8 @@ async function refresh() {
     for (const f of data.files) {
       const e = ext(f.name), base = f.name.replace(/\.[^.]+$/, "").toLowerCase();
       let tag = "";
-      if (e === "ips" || e === "bps") tag = '<span class="tag">patch</span>';
+      if (f.overlay) tag = '<span class="tag">overlay</span>';
+      else if (e === "ips" || e === "bps") tag = '<span class="tag">patch</span>';
       else if (names.has(base + "|ips") || names.has(base + "|bps")) tag = '<span class="tag">patched</span>';
       const tr = document.createElement("tr");
       tr.innerHTML = `<td>${esc(f.name)}${tag}</td><td class="size">${fmtSize(f.size)}</td><td class="act"><button>Delete</button></td>`;

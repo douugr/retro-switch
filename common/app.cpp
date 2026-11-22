@@ -28,6 +28,8 @@ extern "C" {
 #include "rf_patch.h"   // código C do iPad (sem extern "C" próprio)
 }
 #include "qrcodegen.h"
+#define STBI_NO_STDIO
+#include "stb_image.h"   // a implementação fica no ra.cpp
 #include <map>
 
 using gfx::Color;
@@ -78,18 +80,20 @@ static float ease(float t) { return t * t * (3 - 2 * t); }
 
 // ---------------------------------------------------------------- configurações (arquivo simples chave=valor)
 static int cfg_filter = 3;   // 0 nítido, 1 suave, 2 CRT, 3 CRT curvo
+static int cfg_sides = 1;    // laterais da tela: 0 pretas, 1 arte do tema, 2 o jogo desfocado, 3 imagem do usuário
 
 static void settings_load() {
     if (FILE *f = fopen((std::string(BASE) + "/settings.ini").c_str(), "r")) {
         char line[128];
-        while (fgets(line, sizeof(line), f)) sscanf(line, "filter=%d", &cfg_filter);
+        while (fgets(line, sizeof(line), f)) { sscanf(line, "filter=%d", &cfg_filter); sscanf(line, "sides=%d", &cfg_sides); }
         fclose(f);
     }
     if (cfg_filter < 0 || cfg_filter > 3) cfg_filter = 3;
+    if (cfg_sides < 0 || cfg_sides > 3) cfg_sides = 1;
 }
 
 static void settings_save() {
-    if (FILE *f = fopen((std::string(BASE) + "/settings.ini").c_str(), "w")) { fprintf(f, "filter=%d\n", cfg_filter); fclose(f); }
+    if (FILE *f = fopen((std::string(BASE) + "/settings.ini").c_str(), "w")) { fprintf(f, "filter=%d\nsides=%d\n", cfg_filter, cfg_sides); fclose(f); }
 }
 
 // ---------------------------------------------------------------- som (SDL2)
@@ -236,6 +240,7 @@ static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, un
 
 // ---------------------------------------------------------------- jogo, saves e states
 static std::string game_name, game_file, game_path_, sram_path;
+static void overlay_load();   // laterais da tela (mais abaixo)
 static std::vector<uint8_t> sram_snapshot;   // última versão gravada (gravação imediata)
 static bool sram_dirty = false;
 static double sram_poll_at = 0;
@@ -553,6 +558,7 @@ static bool game_load(const std::string &path) {
     sram_load();
     frame_data = nullptr;
     dlog("loaded %s", game_file.c_str());
+    overlay_load();
     ra::game_loaded(path, D->console_of(game_file), !patch.empty());
     if (D->on_game_loaded) D->on_game_loaded();
     return true;
@@ -765,13 +771,72 @@ static void draw_toast() {
     gfx::set_alpha(1);
 }
 
+// ---------------------------------------------------------------- laterais da tela durante o jogo
+// O jogo ocupa a altura toda no meio; as faixas dos lados podem ser pretas, a arte do tema, o próprio jogo
+// desfocado, ou um PNG do usuário (1280x720, com o meio vazio ou não: o jogo é desenhado por cima)
+static gfx::Tex overlay_tex;
+static bool overlay_found = false;
+static std::string overlay_file;
+
+// overlays/<jogo>.png, depois overlays/<console>.png (megadrive, snes, psx...), depois overlays/default.png
+static void overlay_load() {
+    std::string dir = std::string(BASE) + "/overlays/";
+    std::vector<std::string> names = { game_name + ".png" };
+    if (!game_file.empty() && D->cloud_folder_of) names.push_back(std::string(D->cloud_folder_of(game_file)) + ".png");
+    names.push_back("default.png");
+    std::string found, data;
+    for (auto &n : names) if (read_whole(dir + n, data)) { found = n; break; }
+    if (found.empty()) {
+        if (overlay_found) gfx::free_texture(overlay_tex);
+        overlay_found = false;
+        overlay_file.clear();
+        return;
+    }
+    struct stat st;
+    std::string key = found + ":" + std::to_string(stat((dir + found).c_str(), &st) == 0 ? (long long)st.st_mtime : 0) + ":" + std::to_string(data.size());
+    if (overlay_found && key == overlay_file) return;   // já carregado
+    int w = 0, h = 0, comp = 0;
+    unsigned char *px = stbi_load_from_memory((const unsigned char *)data.data(), (int)data.size(), &w, &h, &comp, 4);
+    if (!px) { dlog("overlay: %s is not a readable PNG", found.c_str()); return; }
+    if (overlay_found) gfx::free_texture(overlay_tex);
+    gfx::texture_rgba(overlay_tex, px, w, h);
+    stbi_image_free(px);
+    overlay_found = true;
+    overlay_file = key;
+    dlog("overlay: %s (%dx%d)", found.c_str(), w, h);
+}
+
+static void draw_sides(int mode, float gx, float gw) {
+    if (gx < 1) return;
+    float rx = gx + gw, rw = 1280 - rx;
+    if (mode == 3 && overlay_found) { gfx::image(overlay_tex, 0, 0, 1280, 720); return; }
+    if (mode == 2) {
+        gfx::draw_backdrop(game_aspect, 0.45f);
+    } else if (mode == 1 || mode == 3) {
+        if (T.side) { T.side(0, gx, true); T.side(rx, rw, false); }
+        else {
+            gfx::rect(0, 0, gx, 720, T.bg);
+            gfx::rect(rx, 0, rw, 720, T.bg);
+            if (T.pattern) { T.pattern(0, 0, gx, 720, 1); T.pattern(rx, 0, rw, 720, 1); }
+        }
+    } else return;
+    // sombra do jogo sobre as laterais
+    const Color l[2] = { rgb(0, 0), rgb(0, 0.55f) }, r[2] = { rgb(0, 0.55f), rgb(0, 0) };
+    gfx::hgradient(gx - 18, 0, 18, 720, l, 2);
+    gfx::hgradient(rx, 0, 18, 720, r, 2);
+}
+
 // ---------------------------------------------------------------- menu do jogo (painel lateral)
 static const char *FILTER_NAMES[] = { "Sharp pixels", "Smooth", "CRT TV", "CRT TV, curved" };
 static const char *FILTER_CAPTIONS[] = { "Crisp, square pixels", "Soft scaling, no scanlines",
                                          "Scanlines and phosphor mask", "Tube glass with rounded corners" };
 
-enum Page { P_MAIN, P_SAVE, P_LOAD, P_IMAGE, P_ACH, P_CHOICE, P_PAGE };
-enum MenuId { M_CONTINUE, M_SAVE, M_LOAD, M_ACH, M_IMAGE, M_RESET, M_QUIT, M_EXTRA = 100 };   // M_EXTRA + i: itens do app
+static const char *SIDES_NAMES[] = { "Black", "Theme art", "Game backdrop", "Your image" };
+static const char *SIDES_CAPTIONS[] = { "Plain black bars", "Drawn in the colors of the app",
+                                        "The game itself, blurred behind it", "A PNG from the overlays folder" };
+
+enum Page { P_MAIN, P_SAVE, P_LOAD, P_IMAGE, P_SIDES, P_ACH, P_CHOICE, P_PAGE };
+enum MenuId { M_CONTINUE, M_SAVE, M_LOAD, M_ACH, M_IMAGE, M_SIDES, M_RESET, M_QUIT, M_EXTRA = 100 };   // M_EXTRA + i: itens do app
 static const float PAUSE_W = DRAWER_W * 1.25f;
 
 struct Pause {
@@ -807,6 +872,7 @@ static std::vector<int> main_menu(const Pause &p) {
     std::vector<int> v = { M_CONTINUE, M_SAVE, M_LOAD };
     if (ra::game_active()) v.push_back(M_ACH);
     v.push_back(M_IMAGE);
+    v.push_back(M_SIDES);
     for (int i = 0; i < (int)p.extras.size(); i++) v.push_back(M_EXTRA + i);
     v.insert(v.end(), { M_RESET, M_QUIT });
     return v;
@@ -886,6 +952,7 @@ static void draw_pause(Pause &p) {
                 case M_LOAD: title = "Load state"; caption = can_load(p) ? "Slots and the autosave" : "No states saved yet"; break;
                 case M_ACH: title = "Achievements"; caption = ra::game_summary(); break;
                 case M_IMAGE: title = "Image"; caption = FILTER_NAMES[cfg_filter]; break;
+                case M_SIDES: title = "Screen sides"; caption = SIDES_NAMES[cfg_sides]; break;
                 case M_RESET: title = "Reset game"; caption = "Like the console's reset button"; break;
                 case M_QUIT: title = "Quit game"; caption = "Saves automatically, back to the shelf"; break;
                 default: break;
@@ -909,12 +976,15 @@ static void draw_pause(Pause &p) {
             if (i == e.current) gfx::round_rect(px + w - 40, ry + std::min(ROW, step - 2) / 2 - 6, 12, 12, 6, C_RED);   // o atual
         }
     } else {
-        gfx::text(LABEL, px + pad, list_y + 8, 16, "IMAGE", C_RED);
+        bool sides = p.page == P_SIDES;
+        gfx::text(LABEL, px + pad, list_y + 8, 16, sides ? "SCREEN SIDES" : "IMAGE", C_RED);
         for (int i = 0; i < 4; i++) {
             float ry = list_y + 26 + i * (ROW + 2);
-            menu_row(px, w, ry, FILTER_NAMES[i], FILTER_CAPTIONS[i], i == p.sel);
-            if (i == cfg_filter) gfx::round_rect(px + w - 40, ry + ROW / 2 - 6, 12, 12, 6, C_RED);   // o atual
+            menu_row(px, w, ry, sides ? SIDES_NAMES[i] : FILTER_NAMES[i], sides ? SIDES_CAPTIONS[i] : FILTER_CAPTIONS[i], i == p.sel);
+            if (i == (sides ? cfg_sides : cfg_filter)) gfx::round_rect(px + w - 40, ry + ROW / 2 - 6, 12, 12, 6, C_RED);   // o atual
         }
+        if (sides && p.sel == 3 && !overlay_found)
+            gfx::text(LABEL, px + pad, list_y + 26 + 4 * (ROW + 2) + 18, 14, "No PNG yet: send one on the Upload page", T.dim);
     }
     gfx::set_alpha(1);
     gfx::rect(x, 668, w - 3, 52, rgb(0, 0.55f));
@@ -1293,7 +1363,7 @@ int run_app(const AppDef &def) {
     romfsInit();
     psmInitialize();
     mkdir(BASE, 0777);
-    for (const char *d : { D->games_dir, "saves", "states", D->system_subdir }) mkdir((std::string(BASE) + "/" + d).c_str(), 0777);
+    for (const char *d : { D->games_dir, "saves", "states", D->system_subdir, "overlays" }) mkdir((std::string(BASE) + "/" + d).c_str(), 0777);
     if (D->state_native) mark_legacy_states();
     snprintf(system_dir, sizeof(system_dir), "%s/%s", BASE, D->system_subdir);
     snprintf(save_dir, sizeof(save_dir), "%s/saves", BASE);
@@ -1339,7 +1409,8 @@ int run_app(const AppDef &def) {
               drawer_open = false; drawer_t = 0; screen = UPLOAD;
               std::vector<std::string> exts = D->upload_exts;
               if (exts.empty()) { exts = D->rom_exts; exts.push_back("ips"); exts.push_back("bps"); }
-              web::start(std::string(BASE) + "/" + D->games_dir, D->web_port, exts, std::string(BASE) + "/" + D->system_subdir, D->is_bios); } },
+              web::start(std::string(BASE) + "/" + D->games_dir, D->web_port, exts, std::string(BASE) + "/" + D->system_subdir, D->is_bios,
+                           std::string(BASE) + "/overlays"); } },
         { "Cloud saves", "", [&] { drawer_open = false; drawer_t = 0; screen = CLOUD; } },
         { "Achievements", "", [&] { drawer_open = false; drawer_t = 0; screen = RA_ACCOUNT; } },
         { "Image", "", [&] { cfg_filter = (cfg_filter + 1) % 4; settings_save(); } },
@@ -1512,6 +1583,8 @@ int run_app(const AppDef &def) {
             float h = 720, w = h * game_aspect;
             // Na página "Image" o jogo atrás já mostra o filtro selecionado (prévia ao vivo)
             int filter = (screen == PAUSED && pause.page == P_IMAGE && pause.open) ? pause.sel : cfg_filter;
+            int sides = (screen == PAUSED && pause.page == P_SIDES && pause.open) ? pause.sel : cfg_sides;
+            draw_sides(sides, (1280 - w) / 2, w);
             gfx::draw_game((1280 - w) / 2, 0, w, h, filter);
 
             if (screen == PAUSED) {
@@ -1536,6 +1609,7 @@ int run_app(const AppDef &def) {
                                 case M_LOAD: go(P_LOAD, 0); break;
                                 case M_ACH: pause.ach = ra::achievements(); pause.ach_scroll = 0; go(P_ACH, 0); break;
                                 case M_IMAGE: go(P_IMAGE, cfg_filter); break;
+                                case M_SIDES: overlay_load(); go(P_SIDES, cfg_sides); break;
                                 case M_RESET: retro_reset(); ra::reset(); toast("Game reset"); close(); break;
                                 default:
                                     if (items[pause.sel] >= M_EXTRA) {
@@ -1576,7 +1650,7 @@ int run_app(const AppDef &def) {
                         if (tapped(HidNpadButton_B)) go(P_MAIN, pause.main_sel);
                         else if (tapped(HidNpadButton_Minus)) close();
                     } else {
-                        int n = pause.page == P_IMAGE ? 4 : (int)page_slots(pause).size();
+                        int n = (pause.page == P_IMAGE || pause.page == P_SIDES) ? 4 : (int)page_slots(pause).size();
                         if (n && pressed(HidNpadButton_AnyDown)) pause.sel = (pause.sel + 1) % n;
                         if (n && pressed(HidNpadButton_AnyUp)) pause.sel = (pause.sel + n - 1) % n;
                         if (tapped(HidNpadButton_B)) go(P_MAIN, pause.main_sel);
@@ -1586,6 +1660,11 @@ int run_app(const AppDef &def) {
                                 cfg_filter = pause.sel;
                                 settings_save();
                                 toast(std::string("Image: ") + FILTER_NAMES[cfg_filter]);
+                            } else if (pause.page == P_SIDES) {
+                                cfg_sides = pause.sel;
+                                settings_save();
+                                toast(cfg_sides == 3 && !overlay_found ? std::string("No PNG in /") + (BASE + 5) + "/overlays yet: using the theme art"
+                                                                       : std::string("Screen sides: ") + SIDES_NAMES[cfg_sides]);
                             } else {
                                 int slot = page_slots(pause)[pause.sel];
                                 bool saving = pause.page == P_SAVE;
@@ -1629,6 +1708,7 @@ int run_app(const AppDef &def) {
     dlog("saindo: GL/SDL");
     for (auto &t : pause.thumbs) gfx::free_texture(t);
     gfx::free_texture(resume.thumb);
+    if (overlay_found) gfx::free_texture(overlay_tex);
     web::stop();
     ra::shutdown();
     gfx::free_texture(qr_tex);

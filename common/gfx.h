@@ -67,5 +67,7 @@ void free_texture(Tex &t);
 // Jogo: quadro RGB565 do núcleo e modo de imagem (0 nítido, 1 suave, 2 CRT, 3 CRT curvo)
 void upload_frame(const void *data, unsigned w, unsigned h, size_t pitch);
 void draw_game(float x, float y, float w, float h, int filter);
+// Fundo atrás do jogo: o próprio quadro cobrindo a tela, desfocado e escurecido (dim 0..1)
+void draw_backdrop(float aspect, float dim);
 
 }

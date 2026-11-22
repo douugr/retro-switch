@@ -94,6 +94,18 @@ static void disc(float cx, float cy, float R) {
 
 static void corner(float x, float y, float w, float h) { rainbow_bars(x + w - 240, y + 18, 220, 9); }
 
+// Laterais da tela no jogo: fundo com linhas, um disco saindo pela borda de fora e o arco-íris em pé junto do jogo
+static void side(float x, float w, bool left) {
+    gfx::rect(x, 0, w, 720, BG);
+    pattern(x, 0, w, 720, 1);
+    gfx::clip(x, 0, w, 720);
+    float R = std::max(w * 0.95f, 120.0f);
+    disc(left ? x : x + w, 720 * 0.72f, R);
+    gfx::unclip();
+    float bx = left ? x + w - 30 : x + 22, seg = 720.0f / 5;
+    for (int i = 0; i < 5; i++) gfx::gradient_rect(bx, i * seg, 8, seg + 1, RAINBOW[i], RAINBOW[i + 1]);
+}
+
 // Faixas de arco-íris atrás do letreiro e um disco grande saindo pela borda direita
 static void header(float top, float h) {
     rainbow_bars(1280 * 0.48f, top + h * 0.30f, 1280 * 0.52f, 12 * K);
@@ -711,7 +723,7 @@ int main(int, char **) {
     psx_settings_load();
     AppDef d = {};
     d.name = "PSX32";
-    d.version = "0.5";
+    d.version = "0.6";
     d.base = BASE;
     d.rom_exts = { "m3u", "cue", "chd", "pbp", "iso", "ccd" };
     d.upload_exts = { "cue", "bin", "img", "iso", "chd", "pbp", "m3u", "ccd", "sub", "mdf", "toc", "cbn", "exe" };
@@ -760,6 +772,7 @@ int main(int, char **) {
     t.logo_size = 80;
     t.row_height = 104;
     t.pattern = pattern;
+    t.side = side;
     t.corner = corner;
     t.header = header;
     t.cart = cart;

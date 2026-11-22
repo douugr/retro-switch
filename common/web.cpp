@@ -28,10 +28,13 @@ static const unsigned long long MAX_UPLOAD = 4ULL * 1024 * 1024 * 1024 - 1;   //
 static Thread thread;
 static volatile bool running_ = false;
 static int listen_fd = -1;
-static std::string dir, bios_dir, code, addr;
+static std::string dir, bios_dir, overlay_dir, code, addr;
 static bool (*is_bios_fn)(const std::string &) = nullptr;
 static bool is_bios(const std::string &n) { return is_bios_fn && !bios_dir.empty() && is_bios_fn(n); }
-static std::string dir_for(const std::string &n) { return is_bios(n) ? bios_dir : dir; }
+static std::string ext_of(const std::string &name);
+// Imagens PNG: overlays das laterais da tela (pasta própria)
+static bool is_overlay(const std::string &n) { return !overlay_dir.empty() && ext_of(n) == "png"; }
+static std::string dir_for(const std::string &n) { return is_bios(n) ? bios_dir : is_overlay(n) ? overlay_dir : dir; }
 static std::vector<std::string> exts;
 static volatile int changes_ = 0;
 static Mutex mtx;
@@ -76,7 +79,7 @@ static std::string ext_of(const std::string &name) {
     return e;
 }
 
-static bool accepted(const std::string &name) { return is_bios(name) || std::find(exts.begin(), exts.end(), ext_of(name)) != exts.end(); }
+static bool accepted(const std::string &name) { return is_bios(name) || is_overlay(name) || std::find(exts.begin(), exts.end(), ext_of(name)) != exts.end(); }
 
 static std::string url_decode(const std::string &s) {
     std::string out;
@@ -109,16 +112,19 @@ static std::string name_from_query(const std::string &query) {
     return "";
 }
 
-struct Entry { std::string name; long long size; bool bios; };
+struct Entry { std::string name; long long size; bool bios, overlay; };
 
-static void scan(const std::string &d, bool bios, std::vector<Entry> &files) {
+// kind: 0 jogos, 1 BIOS, 2 overlays
+static void scan(const std::string &d, int kind, std::vector<Entry> &files) {
     if (DIR *dp = opendir(d.c_str())) {
         while (dirent *e = readdir(dp)) {
             std::string n = e->d_name;
-            if (n.empty() || n[0] == '.' || !accepted(n) || is_bios(n) != bios) continue;
+            if (n.empty() || n[0] == '.' || !accepted(n)) continue;
+            int k = is_bios(n) ? 1 : is_overlay(n) ? 2 : 0;
+            if (k != kind) continue;
             struct stat st;
             long long size = stat((d + "/" + n).c_str(), &st) == 0 ? (long long)st.st_size : 0;
-            files.push_back({ n, size, bios });
+            files.push_back({ n, size, kind == 1, kind == 2 });
         }
         closedir(dp);
     }
@@ -126,8 +132,9 @@ static void scan(const std::string &d, bool bios, std::vector<Entry> &files) {
 
 static std::string list_json() {
     std::vector<Entry> files;
-    scan(dir, false, files);
-    if (!bios_dir.empty()) scan(bios_dir, true, files);
+    scan(dir, 0, files);
+    if (!bios_dir.empty()) scan(bios_dir, 1, files);
+    if (!overlay_dir.empty()) scan(overlay_dir, 2, files);
     std::sort(files.begin(), files.end(), [](const Entry &a, const Entry &b) { return strcasecmp(a.name.c_str(), b.name.c_str()) < 0; });
     // Espaço livre no cartão SD (a página mostra "Free space on the Switch")
     struct statvfs vfs;
@@ -135,7 +142,8 @@ static std::string list_json() {
     std::string out = "{\"ok\":true,\"free\":" + std::to_string(free_bytes) + ",\"files\":[";
     for (size_t i = 0; i < files.size(); i++)
         out += (i ? "," : "") + std::string("{\"name\":") + json_str(files[i].name) + ",\"size\":" + std::to_string(files[i].size) +
-               ",\"bios\":" + (files[i].bios ? "true" : "false") + "}";
+               ",\"bios\":" + (files[i].bios ? "true" : "false") +
+               ",\"overlay\":" + (files[i].overlay ? "true" : "false") + "}";
     return out + "]}";
 }
 
@@ -306,9 +314,10 @@ static void loop(void *) {
 }
 
 bool start(const std::string &roms_dir, int port, const std::vector<std::string> &extensions,
-           const std::string &bios, bool (*bios_fn)(const std::string &)) {
+           const std::string &bios, bool (*bios_fn)(const std::string &), const std::string &overlays) {
     if (running_) return true;
     bios_dir = bios;
+    overlay_dir = overlays;
     is_bios_fn = bios_fn;
     static bool mtx_ready = false;
     if (!mtx_ready) { mutexInit(&mtx); mtx_ready = true; }
