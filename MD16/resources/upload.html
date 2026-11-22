@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MD16 · Upload ROMs</title>
+<style>
+  :root { --bg:#111317; --card:#1b1e24; --line:#2c313a; --text:#e8eaee; --dim:#8b93a1; --accent:#e5413a; --ok:#3ecf8e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; color:var(--text);
+         background-color:#09090a;
+         background-image:linear-gradient(#262628 1px, transparent 1px), linear-gradient(90deg, #262628 1px, transparent 1px);
+         background-size:22px 22px; }
+  header { position:relative; overflow:hidden; margin-bottom:22px; }
+  header::after { content:""; position:absolute; right:-10px; top:0; width:150px; height:100%;
+                  background:linear-gradient(115deg, transparent 0 30%, #e5413a 30% 44%, transparent 44% 52%, #f2781f 52% 62%, transparent 62% 68%, #f7c33a 68% 75%, transparent 75%); }
+  main { max-width:760px; margin:0 auto; padding:32px 20px 60px; }
+  h1 { margin:0; font:italic 900 64px/1 "Helvetica Neue", Arial, sans-serif; font-stretch:condensed; letter-spacing:-1px;
+       background:linear-gradient(#fff 0%, #cfd5df 42%, #6b7280 50%, #e8e8ee 70%, #9aa0aa 100%);
+       -webkit-background-clip:text; background-clip:text; color:transparent; -webkit-text-stroke:2px #000;
+       filter:drop-shadow(0 3px 4px rgba(0,0,0,.8)); }
+  p.sub { margin:4px 0 0; color:var(--accent); font-weight:700; letter-spacing:1.5px; font-size:13px; text-transform:uppercase; }
+  #drop { border:2px dashed #555; border-radius:10px; padding:40px 20px; text-align:center; background:rgba(16,16,19,.92); cursor:pointer; transition:.15s; }
+  #drop.over { border-color:var(--accent); background:#241a1b; }
+  #drop strong { display:block; font:italic 900 24px "Helvetica Neue", Arial, sans-serif; font-stretch:condensed; margin-bottom:6px; text-transform:uppercase; }
+  #drop small { color:var(--dim); }
+  #queue { margin:16px 0 0; }
+  .job { display:flex; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--line); }
+  .job .n { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bar { width:160px; height:6px; background:var(--line); border-radius:3px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:0; background:var(--accent); }
+  .job.done .bar i { background:var(--ok); }
+  .job .s { width:70px; text-align:right; color:var(--dim); font-size:13px; }
+  h2 { margin:32px 0 8px; font-size:13px; letter-spacing:1.5px; text-transform:uppercase; color:var(--accent); }
+  table { background:rgba(16,16,19,.92); border-radius:8px; }
+  table { width:100%; border-collapse:collapse; }
+  td { padding:9px 4px; border-bottom:1px solid var(--line); }
+  td.size { color:var(--dim); text-align:right; width:90px; font-variant-numeric:tabular-nums; }
+  td.act { width:70px; text-align:right; }
+  .tag { font-size:11px; padding:2px 6px; border-radius:4px; background:#2a2f38; color:var(--dim); margin-left:6px; }
+  button { background:none; border:1px solid var(--line); color:var(--dim); border-radius:6px; padding:3px 9px; cursor:pointer; font:inherit; font-size:13px; }
+  button:hover { color:#fff; border-color:var(--accent); }
+  .empty { color:var(--dim); padding:12px 4px; }
+  .tip { margin-top:28px; padding:14px 16px; background:rgba(16,16,19,.92); border-left:4px solid var(--accent); border-radius:6px; color:var(--dim); font-size:14px; }
+  .tip b { color:var(--text); }
+  #cloud input { width:100%; margin:6px 0; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--text); font:inherit; }
+  #cloud form button { margin-top:6px; padding:6px 16px; color:var(--text); border-color:var(--accent); }
+  #cloud ol { padding-left:20px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>MD16</h1>
+    <p class="sub">Drop ROMs and patches here · straight to the Switch</p>
+  </header>
+
+  <div id="drop">
+    <strong>Drop files here</strong>
+    <small>or click to choose · .md .gen .bin .smd .sms .gg .sg · patches .ips .bps</small>
+    <input id="pick" type="file" multiple hidden>
+  </div>
+  <div id="queue"></div>
+
+  <h2>On the Switch</h2>
+  <table><tbody id="files"><tr><td class="empty">Loading…</td></tr></tbody></table>
+
+  <div class="tip">
+    <b>Automatic patching:</b> give the patch the same name as the ROM (e.g. <i>Golden Axe.md</i> + <i>Golden Axe.bps</i>).
+    MD16 applies the patch when the game starts, without changing the original ROM.
+  </div>
+  <h2>Cloud saves</h2>
+  <div class="tip" id="cloud">
+    <p id="cloudStatus">Checking…</p>
+    <p>Keep game saves (cartridge saves and memory cards) in a <b>private GitHub repository</b> and continue on another device.
+       The setup is shared by MD16, SNES16 and PSX32 on this Switch.</p>
+    <ol>
+      <li>Create a <b>private</b> repository on GitHub (e.g. <i>retro-saves</i>).</li>
+      <li>Create a <b>fine-grained token</b> (GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens):
+          <i>Repository access</i>: only that repository; <i>Permissions</i>: <b>Contents: Read and write</b>.</li>
+      <li>Paste both below. The token is sent only to the Switch and stays there.</li>
+    </ol>
+    <form id="cloudForm" autocomplete="off">
+      <input id="cloudRepo" placeholder="owner/repository" spellcheck="false">
+      <input id="cloudToken" type="password" placeholder="github_pat_…" spellcheck="false">
+      <button type="submit">Connect</button>
+    </form>
+    <p id="cloudMsg"></p>
+  </div>
+</main>
+<script>
+const ACCEPT = ["md","gen","bin","smd","sms","gg","sg","68k","ips","bps"];
+const drop = document.getElementById("drop"), pick = document.getElementById("pick");
+const queueEl = document.getElementById("queue"), filesEl = document.getElementById("files");
+
+function fmtSize(n) {
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+  if (n >= 1024) return Math.round(n / 1024) + " KB";
+  return n + " B";
+}
+function ext(name) { const i = name.lastIndexOf("."); return i < 0 ? "" : name.slice(i + 1).toLowerCase(); }
+function esc(s) { return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+async function refresh() {
+  try {
+    const r = await fetch("api/list", {cache: "no-store"});
+    const data = await r.json();
+    const names = new Set(data.files.map(f => f.name.replace(/\.[^.]+$/, "").toLowerCase() + "|" + ext(f.name)));
+    if (!data.files.length) { filesEl.innerHTML = '<tr><td class="empty">No files yet.</td></tr>'; return; }
+    filesEl.innerHTML = "";
+    for (const f of data.files) {
+      const e = ext(f.name), base = f.name.replace(/\.[^.]+$/, "").toLowerCase();
+      let tag = "";
+      if (e === "ips" || e === "bps") tag = '<span class="tag">patch</span>';
+      else if (names.has(base + "|ips") || names.has(base + "|bps")) tag = '<span class="tag">patched</span>';
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${esc(f.name)}${tag}</td><td class="size">${fmtSize(f.size)}</td><td class="act"><button>Delete</button></td>`;
+      tr.querySelector("button").onclick = async () => {
+        if (!confirm(`Delete ${f.name} from the Switch?`)) return;
+        await fetch("api/delete?name=" + encodeURIComponent(f.name), {method: "POST"});
+        refresh();
+      };
+      filesEl.appendChild(tr);
+    }
+  } catch (e) {
+    filesEl.innerHTML = '<tr><td class="empty">No connection to the Switch. Is the "Upload ROMs" screen open?</td></tr>';
+  }
+}
+
+function upload(file) {
+  return new Promise(resolve => {
+    const row = document.createElement("div");
+    row.className = "job";
+    row.innerHTML = `<div class="n">${esc(file.name)}</div><div class="bar"><i></i></div><div class="s">0%</div>`;
+    queueEl.prepend(row);
+    const bar = row.querySelector("i"), status = row.querySelector(".s");
+    if (!ACCEPT.includes(ext(file.name))) { status.textContent = "skipped"; resolve(); return; }
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", "api/upload?name=" + encodeURIComponent(file.name));
+    xhr.upload.onprogress = e => { if (e.lengthComputable) { const p = Math.round(e.loaded / e.total * 100); bar.style.width = p + "%"; status.textContent = p + "%"; } };
+    xhr.onload = () => {
+      let ok = false, msg = "error";
+      try { const r = JSON.parse(xhr.responseText); ok = r.ok; msg = r.error || msg; } catch (e) {}
+      if (ok) { row.classList.add("done"); bar.style.width = "100%"; status.textContent = "done"; }
+      else { status.textContent = msg; status.title = msg; }
+      resolve();
+    };
+    xhr.onerror = () => { status.textContent = "failed"; resolve(); };
+    xhr.send(file);
+  });
+}
+
+async function sendAll(list) {
+  for (const f of list) await upload(f);   // um por vez: o iPad 3 agradece
+  refresh();
+}
+
+drop.onclick = () => pick.click();
+pick.onchange = () => { sendAll([...pick.files]); pick.value = ""; };
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => sendAll([...e.dataTransfer.files]));
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("drop", e => e.preventDefault());
+async function cloudRefresh() {
+  try {
+    const r = await (await fetch("api/cloud", {cache: "no-store"})).json();
+    document.getElementById("cloudStatus").innerHTML = r.configured ? "<b>Connected to " + esc(r.repo) + ".</b> To change it, connect again below."
+                                                                    : "<b>Not set up yet.</b>";
+    if (r.repo) document.getElementById("cloudRepo").value = r.repo;
+  } catch (e) {}
+}
+document.getElementById("cloudForm").onsubmit = async e => {
+  e.preventDefault();
+  const msg = document.getElementById("cloudMsg");
+  msg.textContent = "Checking access to the repository…";
+  try {
+    const r = await (await fetch("api/cloud", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({repo: document.getElementById("cloudRepo").value, token: document.getElementById("cloudToken").value})})).json();
+    msg.textContent = r.ok ? "Connected! Saves will sync when games open and after they save." : r.error;
+    if (r.ok) document.getElementById("cloudToken").value = "";
+  } catch (err) { msg.textContent = "No connection to the Switch."; }
+  cloudRefresh();
+};
+cloudRefresh();
+refresh();
+</script>
+</body>
+</html>

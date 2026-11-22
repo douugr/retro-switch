@@ -1,0 +1,15 @@
+# Gerados no build
+build/
+*.nro
+*.nacp
+*.elf
+*.map
+icon.jpg
+romfs/
+# Baixados no build (terceiros): núcleos, rcheevos, stb, QR code
+core/
+common/stb_truetype.h
+common/stb_image.h
+common/qrcodegen.c
+common/qrcodegen.h
+.DS_Store
