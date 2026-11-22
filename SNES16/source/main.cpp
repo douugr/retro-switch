@@ -91,7 +91,7 @@ static const char *cloud_folder_of(const std::string &) { return "snes"; }   // 
 int main(int, char **) {
     AppDef d = {};
     d.name = "SNES16";
-    d.version = "0.4";
+    d.version = "0.5";
     d.base = "sdmc:/snes16";
     d.rom_exts = { "sfc", "smc", "swc", "fig", "gd3", "gd7", "dx2", "bsx" };
     d.web_port = 8716;
@@ -101,6 +101,7 @@ int main(int, char **) {
     d.badge_of = badge_of;
     d.console_of = console_of;
     d.cloud_folder_of = cloud_folder_of;
+    d.sync_states = true;   // os states saem iguais aos do SNES16 do iPad (patches/snes9x-states-ipad.patch)
     d.display_font = "romfs:/fonts/display.ttf";   // Barlow Black Italic (no lugar da AvenirNext-HeavyItalic)
     d.label_font = "romfs:/fonts/label.ttf";       // Barlow SemiBold (no lugar da AvenirNext-DemiBold)
     // Letreiro moldado: roxo em degradê, contorno claro e sombra arroxeada; a fonte já é itálica

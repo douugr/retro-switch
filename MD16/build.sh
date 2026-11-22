@@ -12,6 +12,12 @@ if [ ! -d core/gpgx/.git ]; then
     git clone -q "$GPGX_REPO" core/gpgx
     git -C core/gpgx checkout -q "$GPGX_COMMIT"
 fi
+# States iguais aos do iPad (patches/gpgx-states-ipad.patch): aplica uma vez e recompila o núcleo
+PATCH="$PWD/patches/gpgx-states-ipad.patch"
+if ! git -C core/gpgx apply --reverse --check "$PATCH" 2>/dev/null; then
+    git -C core/gpgx apply "$PATCH" || { echo "Não consegui aplicar $PATCH"; exit 1; }
+    rm -f core/libgpgx.a core/gpgx/genesis_plus_gx_libretro_libnx.a
+fi
 if [ ! -f core/libgpgx.a ]; then
     echo "==> Compilando o Genesis Plus GX para o Switch (primeira vez demora)"
     make -C core/gpgx -f Makefile.libretro platform=libnx HAVE_CHD=0 -j"$(sysctl -n hw.ncpu)" >core/make.log 2>&1 \

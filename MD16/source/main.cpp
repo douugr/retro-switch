@@ -64,10 +64,13 @@ static const char *cloud_folder_of(const std::string &file) {
     return e == "sms" ? "mastersystem" : e == "gg" ? "gamegear" : e == "sg" ? "sg1000" : "megadrive";
 }
 
+// Formato do save state (patches/gpgx-states-ipad.patch): 1 = o antigo deste app, para os states de antes
+extern "C" int rf_state_native;
+
 int main(int, char **) {
     AppDef d = {};
     d.name = "MD16";
-    d.version = "0.4";
+    d.version = "0.5";
     d.base = "sdmc:/md16";
     d.rom_exts = { "md", "gen", "bin", "smd", "sms", "gg", "sg", "68k" };
     d.web_port = 8616;
@@ -77,6 +80,8 @@ int main(int, char **) {
     d.badge_of = badge_of;
     d.console_of = console_of;
     d.cloud_folder_of = cloud_folder_of;
+    d.sync_states = true;   // os states agora saem iguais aos do MD16 do iPad
+    d.state_native = [](bool on) { rf_state_native = on ? 1 : 0; };
     d.display_font = "romfs:/fonts/display.ttf";   // Barlow Condensed Black (no lugar da HelveticaNeue-CondensedBlack)
     d.label_font = "romfs:/fonts/label.ttf";       // Barlow Bold
     // Cromado: céu claro em cima, horizonte escuro no meio, reflexo embaixo; contorno quase preto

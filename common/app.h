@@ -71,6 +71,8 @@ struct AppDef {
     bool (*is_bios)(const std::string &name) = nullptr;        // envio pelo navegador: vai para a pasta de sistema
     std::vector<std::string> upload_exts;   // extensões aceitas no envio (vazio = as das ROMs + patches)
     void (*on_game_loaded)() = nullptr;
+    bool sync_states = false;               // save states dos slots 1 a 3 também na nuvem (formato igual nas duas máquinas)
+    void (*state_native)(bool on) = nullptr; // MD16: o formato do state mudou; liga o antigo para ler os states de antes
 };
 
 // Serviços do app para os hooks de cada emulador

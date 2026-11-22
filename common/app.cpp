@@ -20,6 +20,7 @@
 #include "libretro.h"
 #include "gfx.h"
 #include "app.h"
+#include <zlib.h>
 #include "cloud.h"
 #include "ra.h"
 #include "web.h"
@@ -185,8 +186,9 @@ static bool env_cb(unsigned cmd, void *data) {
         case RETRO_ENVIRONMENT_GET_LOG_INTERFACE: ((struct retro_log_callback *)data)->log = core_log; return true;
         case RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION: *(unsigned *)data = 0; return true;   // interface simples
         case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE:
-            disk_cb = *(const struct retro_disk_control_callback *)data;
-            has_disk = true;
+            // O Genesis Plus GX manda NULL nos jogos de cartucho (só o Mega CD tem discos)
+            has_disk = data != nullptr;
+            if (data) disk_cb = *(const struct retro_disk_control_callback *)data;
             return true;
         case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO: {
             auto av = (const struct retro_system_av_info *)data;
@@ -269,6 +271,31 @@ static void sram_poll() {
 
 static std::string state_path(int slot) { return path_in("states", game_name + ".state" + std::to_string(slot)); }
 static std::string thumb_path(int slot) { return state_path(slot) + ".thumb"; }
+// State gravado no formato antigo deste app (antes de ficar igual ao do iPad): marcado com <state>.legacy
+static std::string legacy_path(int slot) { return state_path(slot) + ".legacy"; }
+static bool file_exists(const std::string &p) { struct stat st; return stat(p.c_str(), &st) == 0; }
+
+// Na primeira vez com o formato novo, marca os states que já existiam para continuarem abrindo
+static void mark_legacy_states() {
+    std::string dir = std::string(BASE) + "/states";
+    std::string marker = dir + "/.ipad-format";
+    if (file_exists(marker)) return;
+    int n = 0;
+    if (DIR *d = opendir(dir.c_str())) {
+        while (struct dirent *e = readdir(d)) {
+            std::string name = e->d_name;
+            size_t at = name.rfind(".state");
+            if (at == std::string::npos || at + 6 >= name.size()) continue;
+            bool digits = true;
+            for (size_t i = at + 6; i < name.size(); i++) digits = digits && name[i] >= '0' && name[i] <= '9';
+            if (!digits) continue;
+            if (FILE *f = fopen((dir + "/" + name + ".legacy").c_str(), "wb")) { fclose(f); n++; }
+        }
+        closedir(d);
+    }
+    if (FILE *f = fopen(marker.c_str(), "wb")) { fputs("1\n", f); fclose(f); }
+    dlog("states: %d old states marked", n);
+}
 
 static void sram_save() {
     size_t size = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
@@ -311,6 +338,92 @@ static bool thumb_load(int slot, gfx::Tex &tex) {
     return ok;
 }
 
+// ---- Pacote de um slot para a nuvem (.rfst): o mesmo formato no iPad e no Switch
+// "RFSZ" + tamanho original (u32) + zlib de: "RFST" + versão (u32 = 1) + n (u32) + n seções (etiqueta de 4 letras,
+// tamanho u32, dados). Seções: STAT (o state), RAPG (progresso das conquistas), THMB (miniatura, só o Switch grava)
+static std::string bundle_path(int slot) { return state_path(slot) + ".rfst"; }
+
+static bool read_whole(const std::string &path, std::string &out) {
+    FILE *f = fopen(path.c_str(), "rb");
+    if (!f) return false;
+    out.clear();
+    char buf[65536];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, n);
+    fclose(f);
+    return true;
+}
+
+static void put32(std::string &s, uint32_t v) { for (int i = 0; i < 4; i++) s += (char)((v >> (8 * i)) & 255); }
+static uint32_t get32(const std::string &s, size_t at) {
+    uint32_t v = 0;
+    for (int i = 0; i < 4; i++) v |= (uint32_t)(uint8_t)s[at + i] << (8 * i);
+    return v;
+}
+
+static void bundle_write(int slot) {
+    std::string st, ra_p, th;
+    if (!read_whole(state_path(slot), st)) return;
+    read_whole(state_path(slot) + ".ra", ra_p);
+    read_whole(thumb_path(slot), th);
+    std::string raw = "RFST";
+    put32(raw, 1);
+    put32(raw, 1 + !ra_p.empty() + !th.empty());
+    auto section = [&](const char *tag, const std::string &d) { raw.append(tag, 4); put32(raw, (uint32_t)d.size()); raw += d; };
+    section("STAT", st);
+    if (!ra_p.empty()) section("RAPG", ra_p);
+    if (!th.empty()) section("THMB", th);
+    uLongf zlen = compressBound(raw.size());
+    std::string out = "RFSZ";
+    put32(out, (uint32_t)raw.size());
+    out.resize(8 + zlen);
+    if (compress2((Bytef *)&out[8], &zlen, (const Bytef *)raw.data(), raw.size(), 6) != Z_OK) return;
+    out.resize(8 + zlen);
+    std::string path = bundle_path(slot);
+    if (FILE *f = fopen((path + ".tmp").c_str(), "wb")) {
+        bool ok = fwrite(out.data(), 1, out.size(), f) == out.size();
+        fclose(f);
+        remove(path.c_str());
+        if (ok) rename((path + ".tmp").c_str(), path.c_str());
+    }
+    cloud::local_save_written(path);
+}
+
+// Um pacote chegou da nuvem: vira os arquivos do slot (state, progresso e miniatura)
+static void bundle_unpack(const std::string &path) {
+    if (path.size() < 5 || path.compare(path.size() - 5, 5, ".rfst") != 0) return;
+    std::string z, raw;
+    if (!read_whole(path, z) || z.size() < 8 || z.compare(0, 4, "RFSZ") != 0) return;
+    uLongf len = get32(z, 4);
+    raw.resize(len);
+    if (uncompress((Bytef *)&raw[0], &len, (const Bytef *)z.data() + 8, z.size() - 8) != Z_OK || raw.compare(0, 4, "RFST") != 0) {
+        dlog("states: %s is damaged", path.c_str());
+        return;
+    }
+    std::string base = path.substr(0, path.size() - 5);   // .../jogo.state1
+    std::string st, ra_p, th;
+    uint32_t n = get32(raw, 8);
+    size_t at = 12;
+    for (uint32_t i = 0; i < n && at + 8 <= raw.size(); i++) {
+        std::string tag = raw.substr(at, 4);
+        uint32_t sz = get32(raw, at + 4);
+        if (at + 8 + sz > raw.size()) break;
+        std::string d = raw.substr(at + 8, sz);
+        if (tag == "STAT") st = d; else if (tag == "RAPG") ra_p = d; else if (tag == "THMB") th = d;
+        at += 8 + sz;
+    }
+    if (st.empty()) return;
+    auto write = [](const std::string &p, const std::string &d) {
+        if (d.empty()) { remove(p.c_str()); return; }
+        if (FILE *f = fopen(p.c_str(), "wb")) { fwrite(d.data(), 1, d.size(), f); fclose(f); }
+    };
+    write(base, st);
+    remove((base + ".legacy").c_str());   // veio da nuvem: já está no formato novo
+    write(base + ".ra", ra_p);
+    write(base + ".thumb", th);   // state do iPad: sem miniatura (a antiga sairia errada)
+    dlog("states: unpacked %s", path.c_str());
+}
+
 static bool state_save(int slot) {
     size_t size = retro_serialize_size();
     if (!size) return false;
@@ -321,11 +434,13 @@ static bool state_save(int slot) {
     bool ok = fwrite(buf.data(), 1, size, f) == size;
     fclose(f);
     if (ok) {
+        remove(legacy_path(slot).c_str());
         thumb_save(slot);
         std::vector<uint8_t> prog = ra::progress();
         std::string rp = state_path(slot) + ".ra";
         if (prog.empty()) remove(rp.c_str());
         else if (FILE *g = fopen(rp.c_str(), "wb")) { fwrite(prog.data(), 1, prog.size(), g); fclose(g); }
+        if (D->sync_states && slot >= 1) bundle_write(slot);   // vai para a nuvem ao sair do jogo
     }
     return ok;
 }
@@ -339,7 +454,11 @@ static bool state_load(int slot) {
     std::vector<uint8_t> buf(n > 0 ? n : 0);
     bool ok = n > 0 && fread(buf.data(), 1, n, f) == (size_t)n;
     fclose(f);
-    if (!ok || !retro_unserialize(buf.data(), n)) return false;
+    bool legacy = D->state_native && file_exists(legacy_path(slot));
+    if (legacy) D->state_native(true);
+    bool loaded = ok && retro_unserialize(buf.data(), n);
+    if (legacy) D->state_native(false);
+    if (!loaded) return false;
     // Conquistas: volta o progresso que estava valendo quando o state foi salvo
     std::vector<uint8_t> prog;
     if (FILE *g = fopen((state_path(slot) + ".ra").c_str(), "rb")) {
@@ -455,8 +574,12 @@ static std::vector<cloud::File> cloud_files(const std::string &rom_path) {
     std::string saves = std::string(BASE) + "/saves";
     std::string file = rom_path.substr(rom_path.find_last_of('/') + 1);
     std::string name = file.substr(0, file.find_last_of('.'));
-    if (D->save_files) for (auto &f : D->save_files(rom_path, saves)) out.push_back(cloud::File{ f.local, f.remote, f.label });
-    else out.push_back(cloud::File{ saves + "/" + name + ".srm", "", "" });
+    if (D->save_files) for (auto &f : D->save_files(rom_path, saves)) out.push_back(cloud::File{ f.local, f.remote, f.label, "" });
+    else out.push_back(cloud::File{ saves + "/" + name + ".srm", "", "", "" });
+    if (D->sync_states)
+        for (int slot = 1; slot <= 3; slot++)
+            out.push_back(cloud::File{ std::string(BASE) + "/states/" + name + ".state" + std::to_string(slot) + ".rfst", "",
+                                       "save state slot " + std::to_string(slot), ".state" + std::to_string(slot) + ".rfst" });
     return out;
 }
 
@@ -1171,6 +1294,7 @@ int run_app(const AppDef &def) {
     psmInitialize();
     mkdir(BASE, 0777);
     for (const char *d : { D->games_dir, "saves", "states", D->system_subdir }) mkdir((std::string(BASE) + "/" + d).c_str(), 0777);
+    if (D->state_native) mark_legacy_states();
     snprintf(system_dir, sizeof(system_dir), "%s/%s", BASE, D->system_subdir);
     snprintf(save_dir, sizeof(save_dir), "%s/saves", BASE);
     dlog("---- %s started", APP);
@@ -1190,6 +1314,7 @@ int run_app(const AppDef &def) {
     gfx::set_chrome(D->chrome);
     if (!gfx::init(D->display_font, D->label_font)) dlog("gfx init incompleto");
     cloud::init(APP, D->cloud_folder_of, D->console_of);
+    cloud::set_download_hook(bundle_unpack);
     ra::init(APP, "0.3");
 
     retro_set_environment(env_cb);
@@ -1297,7 +1422,7 @@ int run_app(const AppDef &def) {
             if (screen == SYNCING) {
                 if (st == cloud::CONFLICT) { screen = CONFLICT; dialog_sel = 0; lock_input(); }
                 else if (st == cloud::DONE || st == cloud::IDLE) start_game();
-                else if (now_s() - sync_started > 8) { cloud::abandon_sync(); toast("Cloud didn't answer: using this Switch's save"); start_game(); }
+                else if (now_s() - sync_started > (D->sync_states ? 20 : 8)) { cloud::abandon_sync(); toast("Cloud didn't answer: using this Switch's save"); start_game(); }
                 else if (now_s() - sync_started > 0.25) draw_hud("Syncing save...");
             } else {
                 std::string file = lib.roms[lib.sel];

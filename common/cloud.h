@@ -23,7 +23,8 @@ int pending_count();
 bool busy();                                // enviando ou sincronizando agora
 
 // Um save do jogo: arquivo local e caminho no repositório (vazio = <pasta>/<impressão digital da ROM>.srm)
-struct File { std::string local, remote, label; };
+// suffix: com remote vazio, o caminho é <pasta>/states/<impressão digital><suffix> (save states, ex.: ".state1.rfst")
+struct File { std::string local, remote, label, suffix; };
 
 // Antes de jogar: baixa os saves mais novos. A tela consulta sync_status() a cada quadro
 enum Status { IDLE, RUNNING, CONFLICT, DONE };
@@ -39,6 +40,8 @@ void resolve(bool use_cloud);
 
 // Depois de gravar um save no cartão: marca para enviar (o envio roda quando push() for chamado)
 void local_save_written(const std::string &local);
+// Chamado depois que um arquivo veio da nuvem (o app desempacota os save states)
+void set_download_hook(void (*hook)(const std::string &local));
 void push();
 // Envia todos os saves das ROMs da lista que mudaram desde a última vez (botão da tela da nuvem)
 void upload_all(const std::vector<std::pair<std::string, File>> &saves);   // (ROM, save) de toda a biblioteca

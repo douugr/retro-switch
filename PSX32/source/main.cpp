@@ -711,7 +711,7 @@ int main(int, char **) {
     psx_settings_load();
     AppDef d = {};
     d.name = "PSX32";
-    d.version = "0.4";
+    d.version = "0.5";
     d.base = BASE;
     d.rom_exts = { "m3u", "cue", "chd", "pbp", "iso", "ccd" };
     d.upload_exts = { "cue", "bin", "img", "iso", "chd", "pbp", "m3u", "ccd", "sub", "mdf", "toc", "cbn", "exe" };
@@ -735,6 +735,7 @@ int main(int, char **) {
     d.sram_file = sram_file;
     d.blank_sram = blank_card;
     d.write_through = true;
+    d.sync_states = true;   // states do PCSX ReARMed já são iguais no iPad (32 bits) e no Switch (64 bits)
     d.option = option;
     d.extra_menu = extra_menu;
     d.is_bios = is_bios;

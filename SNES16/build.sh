@@ -11,6 +11,12 @@ if [ ! -d core/s9x/.git ]; then
     git clone -q "$S9X_REPO" core/s9x
     git -C core/s9x checkout -q "$S9X_COMMIT"
 fi
+# States iguais aos do iPad (patches/snes9x-states-ipad.patch): aplica uma vez e recompila o núcleo
+PATCH="$PWD/patches/snes9x-states-ipad.patch"
+if ! git -C core/s9x apply --reverse --check "$PATCH" 2>/dev/null; then
+    git -C core/s9x apply "$PATCH" || { echo "Não consegui aplicar $PATCH"; exit 1; }
+    rm -f core/libsnes9x2005.a
+fi
 CF=(-O3 -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE -ffunction-sections -DNDEBUG -w)
 if [ ! -f core/libsnes9x2005.a ]; then
     echo "==> Compilando o Snes9x 2005 para o Switch (primeira vez demora)"

@@ -343,7 +343,7 @@ static std::string url_path(const std::string &remote) {
 
 // Pedido à API do GitHub. Devolve o status HTTP (-1 sem conexão)
 static long request(const char *method, const std::string &path, const std::string &body, std::string &response,
-                    const std::string &token_override = "") {
+                    const std::string &token_override = "", bool raw = false) {
     std::string token;
     { Lock l; token = token_override.empty() ? cfg_token : token_override; }
     CURL *c = curl_easy_init();
@@ -352,7 +352,8 @@ static long request(const char *method, const std::string &path, const std::stri
     std::string url = "https://api.github.com" + path;
     struct curl_slist *h = nullptr;
     h = curl_slist_append(h, ("Authorization: Bearer " + token).c_str());
-    h = curl_slist_append(h, "Accept: application/vnd.github+json");
+    // raw: o conteúdo do arquivo direto (os maiores que 1 MB, como save states, não vêm no JSON)
+    h = curl_slist_append(h, raw ? "Accept: application/vnd.github.raw" : "Accept: application/vnd.github+json");
     h = curl_slist_append(h, "X-GitHub-Api-Version: 2022-11-28");
     h = curl_slist_append(h, ("User-Agent: " + app_name + "-cloud-saves").c_str());
     if (!body.empty()) h = curl_slist_append(h, "Content-Type: application/json");
@@ -366,7 +367,7 @@ static long request(const char *method, const std::string &path, const std::stri
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, on_data);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 8L);
-    curl_easy_setopt(c, CURLOPT_TIMEOUT, 25L);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, body.size() > 500000 || raw ? 120L : 25L);
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
     // Certificados raiz (lista da Mozilla, embutida no app): a conexão com o GitHub é verificada
     curl_easy_setopt(c, CURLOPT_CAINFO, "romfs:/cacert.pem");
@@ -387,17 +388,23 @@ static std::string contents_path(const std::string &remote) {
     return "/repos/" + repo + "/contents/" + url_path(remote);
 }
 
-// GET: sha vazio = não existe
-static long fetch(const std::string &remote, std::string &sha, std::string &content) {
+// GET: sha vazio = não existe. big = arquivo maior que 1 MB (o conteúdo vem depois, com fetch_raw, só se precisar)
+static long fetch(const std::string &remote, std::string &sha, std::string &content, bool &big) {
     std::string r;
     long st = request("GET", contents_path(remote), "", r);
     sha.clear(); content.clear();
+    big = false;
     if (st == 200) {
         Json j = parse(r);
         sha = j["sha"].str;
         content = b64_decode(j["content"].str);
+        big = content.empty() && j["size"].num > 0;
     }
     return st;
+}
+
+static bool fetch_raw(const std::string &remote, std::string &content) {
+    return request("GET", contents_path(remote), "", content, "", true) == 200;
 }
 
 static long put(const std::string &remote, const std::string &data, const std::string &sha, const std::string &msg, std::string &new_sha) {
@@ -461,15 +468,26 @@ static volatile bool resolved = false;
 static const char *(*folder_fn)(const std::string &) = nullptr;
 static uint32_t (*console_fn)(const std::string &) = nullptr;
 
-// Caminho no repositório: pasta do sistema + impressão digital da ROM (o hash do RetroAchievements, como no iPad)
-static std::string remote_for(const std::string &rom) {
-    char hash[33] = "";
-    if (!console_fn || !rc_hash_generate_from_file(hash, console_fn(rom), rom.c_str())) {
-        std::string h = md5_file(rom);   // sem hash do RetroAchievements: o MD5 do arquivo
-        if (h.empty()) return "";
-        snprintf(hash, sizeof(hash), "%s", h.c_str());
+// Caminho no repositório: pasta do sistema + impressão digital da ROM (o hash do RetroAchievements, como no iPad).
+// Save states ficam em <pasta>/states/<impressão digital><suffix>
+static std::map<std::string, std::string> hash_cache;
+static std::string remote_for(const std::string &rom, const std::string &suffix = "") {
+    std::string h;
+    {
+        Lock l;
+        auto it = hash_cache.find(rom);
+        if (it != hash_cache.end()) h = it->second;
     }
-    return std::string(folder_fn ? folder_fn(rom) : "saves") + "/" + hash + ".srm";
+    if (h.empty()) {
+        char hash[33] = "";
+        if (console_fn && rc_hash_generate_from_file(hash, console_fn(rom), rom.c_str())) h = hash;
+        else h = md5_file(rom);   // sem hash do RetroAchievements: o MD5 do arquivo
+        if (h.empty()) return "";
+        Lock l;
+        hash_cache[rom] = h;
+    }
+    std::string folder = folder_fn ? folder_fn(rom) : "saves";
+    return suffix.empty() ? folder + "/" + h + ".srm" : folder + "/states/" + h + suffix;
 }
 
 static void mark_dirty_locked(const std::string &remote) {
@@ -477,9 +495,13 @@ static void mark_dirty_locked(const std::string &remote) {
     save_state();
 }
 
+static void (*download_hook)(const std::string &) = nullptr;
+void set_download_hook(void (*hook)(const std::string &)) { download_hook = hook; }
+
 static void use_cloud(const std::string &remote, const std::string &local, const std::string &content, const std::string &sha) {
     mkdir(local.substr(0, local.find_last_of('/')).c_str(), 0777);
     write_file(local, content);
+    if (download_hook) download_hook(local);
     Lock l;
     Entry &e = state[remote];
     e.sha = sha;
@@ -492,7 +514,7 @@ static void use_cloud(const std::string &remote, const std::string &local, const
 
 // Sincroniza um save. Devolve false se a rede falhou (os outros saves do jogo nem são tentados)
 static bool sync_one(const std::string &rom, const File &file, const std::string &name) {
-    std::string remote = file.remote.empty() ? remote_for(rom) : file.remote;
+    std::string remote = file.remote.empty() ? remote_for(rom, file.suffix) : file.remote;
     if (remote.empty()) { dlog("cloud: no hash for %s", rom.c_str()); return true; }
     Entry st;
     {
@@ -504,7 +526,8 @@ static bool sync_one(const std::string &rom, const File &file, const std::string
         save_state();
     }
     std::string sha, content;
-    long status = fetch(remote, sha, content);
+    bool big = false;
+    long status = fetch(remote, sha, content, big);
     if (sync_abandoned) return false;
     if (status != 200 && status != 404) {
         set_message(status == 401 ? "GitHub refused the token: set it up again" : "Cloud unavailable right now");
@@ -519,6 +542,12 @@ static bool sync_one(const std::string &rom, const File &file, const std::string
         if (have_local) { Lock l; mark_dirty_locked(remote); }
         return true;
     }
+    if (sha == st.sha && !local_changed) return true;   // nada mudou dos dois lados (nem baixa o conteúdo)
+    if (big && !fetch_raw(remote, content)) {
+        set_message("Cloud unavailable right now");
+        return false;
+    }
+    if (sync_abandoned) return false;
     std::string cloud_md5 = md5_of(content);
     if (sha == st.sha || cloud_md5 == mine_md5) {
         Lock l;
@@ -607,7 +636,7 @@ static void do_upload_all(const Job &job) {
         const File &f = rf.second;
         std::string data;
         if (!read_file(f.local, data)) continue;
-        std::string remote = f.remote.empty() ? remote_for(rf.first) : f.remote;
+        std::string remote = f.remote.empty() ? remote_for(rf.first, f.suffix) : f.remote;
         if (remote.empty()) continue;
         Lock l;
         Entry &e = state[remote];

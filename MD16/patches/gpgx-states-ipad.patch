@@ -1,0 +1,430 @@
+diff --git a/core/rf_state.h b/core/rf_state.h
+new file mode 100644
+index 0000000..2310404
+--- /dev/null
++++ b/core/rf_state.h
+@@ -0,0 +1,37 @@
++/* Save states iguais no iPad (armv7, 32 bits) e no Switch (arm64).
++ * Quatro structs do núcleo são gravados crus no state e mudam de tamanho com ponteiros de 8 bytes.
++ * No Switch eles passam a ser gravados no layout do iPad (os ponteiros vão zerados: o núcleo
++ * os refaz ao carregar). rf_state_native = 1 lê/grava o formato antigo do Switch (states locais antigos). */
++#ifndef RF_STATE_H
++#define RF_STATE_H
++#include <string.h>
++#include "rf_state_tables.h"
++
++extern int rf_state_native;
++
++/* As tabelas valem para o arm64 (Switch); em 32 bits o layout já é o do iPad */
++#if defined(__aarch64__) || defined(__LP64__)
++#define RF_CANON 1
++#else
++#define RF_CANON 0
++#endif
++
++static inline int rf_canon_save(unsigned char *dst, const void *src, const rf_run *t, int canon, int native)
++{
++  if (rf_state_native || !RF_CANON) { memcpy(dst, src, native); return native; }
++  memset(dst, 0, canon);
++  for (; t->size; t++) memcpy(dst + t->canon, (const unsigned char *)src + t->native, t->size);
++  return canon;
++}
++
++static inline int rf_canon_load(void *dst, const unsigned char *src, const rf_run *t, int canon, int native)
++{
++  if (rf_state_native || !RF_CANON) { memcpy(dst, src, native); return native; }
++  for (; t->size; t++) memcpy((unsigned char *)dst + t->native, src + t->canon, t->size);
++  return canon;
++}
++
++#define RF_CHECK(var, name) ((void)sizeof(char[(!RF_CANON || sizeof(var) == name##_NATIVE_SZ) ? 1 : -1]))
++#define RF_SAVE(var, name) RF_CHECK(var, name); bufferptr += rf_canon_save(&state[bufferptr], &(var), name, name##_CANON_SZ, sizeof(var))
++#define RF_LOAD(var, name) RF_CHECK(var, name); bufferptr += rf_canon_load(&(var), &state[bufferptr], name, name##_CANON_SZ, sizeof(var))
++#endif
+diff --git a/core/rf_state_tables.h b/core/rf_state_tables.h
+new file mode 100644
+index 0000000..50b1a2b
+--- /dev/null
++++ b/core/rf_state_tables.h
+@@ -0,0 +1,270 @@
++/* Gerado por stategen/layout.py a partir do layout dos structs (clang -fdump-record-layouts), armv7 iOS x arm64. Genesis Plus GX b9c2316 */
++typedef struct { unsigned short native, canon, size; } rf_run;
++/* Z80_Regs: 88 bytes no Switch, 76 bytes no formato do iPad (armv7) */
++static const rf_run rf_z80[] = {
++  {0, 0, 63},
++  {64, 64, 4},
++  {0, 0, 0}
++};
++#define rf_z80_NATIVE_SZ 88
++#define rf_z80_CANON_SZ 76
++/* opll_t: 392 bytes no Switch, 384 bytes no formato do iPad (armv7) */
++static const rf_run rf_opll[] = {
++  {0, 0, 12},
++  {24, 16, 58},
++  {84, 76, 11},
++  {96, 88, 9},
++  {106, 98, 123},
++  {230, 222, 21},
++  {252, 244, 119},
++  {372, 364, 18},
++  {0, 0, 0}
++};
++#define rf_opll_NATIVE_SZ 392
++#define rf_opll_CANON_SZ 384
++/* YM2413: 5984 bytes no Switch, 5980 bytes no formato do iPad (armv7) */
++static const rf_run rf_ym2413[] = {
++  {0, 0, 25},
++  {28, 28, 10},
++  {40, 40, 19},
++  {60, 60, 17},
++  {80, 80, 29},
++  {112, 112, 10},
++  {124, 124, 19},
++  {144, 144, 17},
++  {164, 164, 18},
++  {184, 184, 25},
++  {212, 212, 10},
++  {224, 224, 19},
++  {244, 244, 17},
++  {264, 264, 29},
++  {296, 296, 10},
++  {308, 308, 19},
++  {328, 328, 17},
++  {348, 348, 18},
++  {368, 368, 25},
++  {396, 396, 10},
++  {408, 408, 19},
++  {428, 428, 17},
++  {448, 448, 29},
++  {480, 480, 10},
++  {492, 492, 19},
++  {512, 512, 17},
++  {532, 532, 18},
++  {552, 552, 25},
++  {580, 580, 10},
++  {592, 592, 19},
++  {612, 612, 17},
++  {632, 632, 29},
++  {664, 664, 10},
++  {676, 676, 19},
++  {696, 696, 17},
++  {716, 716, 18},
++  {736, 736, 25},
++  {764, 764, 10},
++  {776, 776, 19},
++  {796, 796, 17},
++  {816, 816, 29},
++  {848, 848, 10},
++  {860, 860, 19},
++  {880, 880, 17},
++  {900, 900, 18},
++  {920, 920, 25},
++  {948, 948, 10},
++  {960, 960, 19},
++  {980, 980, 17},
++  {1000, 1000, 29},
++  {1032, 1032, 10},
++  {1044, 1044, 19},
++  {1064, 1064, 17},
++  {1084, 1084, 18},
++  {1104, 1104, 25},
++  {1132, 1132, 10},
++  {1144, 1144, 19},
++  {1164, 1164, 17},
++  {1184, 1184, 29},
++  {1216, 1216, 10},
++  {1228, 1228, 19},
++  {1248, 1248, 17},
++  {1268, 1268, 18},
++  {1288, 1288, 25},
++  {1316, 1316, 10},
++  {1328, 1328, 19},
++  {1348, 1348, 17},
++  {1368, 1368, 29},
++  {1400, 1400, 10},
++  {1412, 1412, 19},
++  {1432, 1432, 17},
++  {1452, 1452, 18},
++  {1472, 1472, 25},
++  {1500, 1500, 10},
++  {1512, 1512, 19},
++  {1532, 1532, 17},
++  {1552, 1552, 29},
++  {1584, 1584, 10},
++  {1596, 1596, 19},
++  {1616, 1616, 17},
++  {1636, 1636, 18},
++  {1656, 1656, 9},
++  {1668, 1668, 17},
++  {1688, 1688, 4278},
++  {5968, 5968, 12},
++  {0, 0, 0}
++};
++#define rf_ym2413_NATIVE_SZ 5984
++#define rf_ym2413_CANON_SZ 5980
++/* YM2612: 3576 bytes no Switch, 3336 bytes no formato do iPad (armv7) */
++static const rf_run rf_ym2612[] = {
++  {8, 4, 1},
++  {12, 8, 17},
++  {32, 28, 13},
++  {48, 44, 27},
++  {76, 72, 4},
++  {88, 80, 1},
++  {92, 84, 17},
++  {112, 104, 13},
++  {128, 120, 27},
++  {156, 148, 4},
++  {168, 156, 1},
++  {172, 160, 17},
++  {192, 180, 13},
++  {208, 196, 27},
++  {236, 224, 4},
++  {248, 232, 1},
++  {252, 236, 17},
++  {272, 256, 13},
++  {288, 272, 27},
++  {316, 300, 6},
++  {324, 308, 8},
++  {376, 336, 9},
++  {388, 348, 5},
++  {396, 356, 4},
++  {408, 364, 1},
++  {412, 368, 17},
++  {432, 388, 13},
++  {448, 404, 27},
++  {476, 432, 4},
++  {488, 440, 1},
++  {492, 444, 17},
++  {512, 464, 13},
++  {528, 480, 27},
++  {556, 508, 4},
++  {568, 516, 1},
++  {572, 520, 17},
++  {592, 540, 13},
++  {608, 556, 27},
++  {636, 584, 4},
++  {648, 592, 1},
++  {652, 596, 17},
++  {672, 616, 13},
++  {688, 632, 27},
++  {716, 660, 6},
++  {724, 668, 8},
++  {776, 696, 9},
++  {788, 708, 5},
++  {796, 716, 4},
++  {808, 724, 1},
++  {812, 728, 17},
++  {832, 748, 13},
++  {848, 764, 27},
++  {876, 792, 4},
++  {888, 800, 1},
++  {892, 804, 17},
++  {912, 824, 13},
++  {928, 840, 27},
++  {956, 868, 4},
++  {968, 876, 1},
++  {972, 880, 17},
++  {992, 900, 13},
++  {1008, 916, 27},
++  {1036, 944, 4},
++  {1048, 952, 1},
++  {1052, 956, 17},
++  {1072, 976, 13},
++  {1088, 992, 27},
++  {1116, 1020, 6},
++  {1124, 1028, 8},
++  {1176, 1056, 9},
++  {1188, 1068, 5},
++  {1196, 1076, 4},
++  {1208, 1084, 1},
++  {1212, 1088, 17},
++  {1232, 1108, 13},
++  {1248, 1124, 27},
++  {1276, 1152, 4},
++  {1288, 1160, 1},
++  {1292, 1164, 17},
++  {1312, 1184, 13},
++  {1328, 1200, 27},
++  {1356, 1228, 4},
++  {1368, 1236, 1},
++  {1372, 1240, 17},
++  {1392, 1260, 13},
++  {1408, 1276, 27},
++  {1436, 1304, 4},
++  {1448, 1312, 1},
++  {1452, 1316, 17},
++  {1472, 1336, 13},
++  {1488, 1352, 27},
++  {1516, 1380, 6},
++  {1524, 1388, 8},
++  {1576, 1416, 9},
++  {1588, 1428, 5},
++  {1596, 1436, 4},
++  {1608, 1444, 1},
++  {1612, 1448, 17},
++  {1632, 1468, 13},
++  {1648, 1484, 27},
++  {1676, 1512, 4},
++  {1688, 1520, 1},
++  {1692, 1524, 17},
++  {1712, 1544, 13},
++  {1728, 1560, 27},
++  {1756, 1588, 4},
++  {1768, 1596, 1},
++  {1772, 1600, 17},
++  {1792, 1620, 13},
++  {1808, 1636, 27},
++  {1836, 1664, 4},
++  {1848, 1672, 1},
++  {1852, 1676, 17},
++  {1872, 1696, 13},
++  {1888, 1712, 27},
++  {1916, 1740, 6},
++  {1924, 1748, 8},
++  {1976, 1776, 9},
++  {1988, 1788, 5},
++  {1996, 1796, 4},
++  {2008, 1804, 1},
++  {2012, 1808, 17},
++  {2032, 1828, 13},
++  {2048, 1844, 27},
++  {2076, 1872, 4},
++  {2088, 1880, 1},
++  {2092, 1884, 17},
++  {2112, 1904, 13},
++  {2128, 1920, 27},
++  {2156, 1948, 4},
++  {2168, 1956, 1},
++  {2172, 1960, 17},
++  {2192, 1980, 13},
++  {2208, 1996, 27},
++  {2236, 2024, 4},
++  {2248, 2032, 1},
++  {2252, 2036, 17},
++  {2272, 2056, 13},
++  {2288, 2072, 27},
++  {2316, 2100, 6},
++  {2324, 2108, 8},
++  {2376, 2136, 9},
++  {2388, 2148, 5},
++  {2396, 2156, 5},
++  {2404, 2164, 7},
++  {2412, 2172, 5},
++  {2420, 2180, 1077},
++  {3500, 3260, 57},
++  {3560, 3320, 16},
++  {0, 0, 0}
++};
++#define rf_ym2612_NATIVE_SZ 3576
++#define rf_ym2612_CANON_SZ 3336
+diff --git a/core/sound/sound.c b/core/sound/sound.c
+index dc09189..1655871 100644
+--- a/core/sound/sound.c
++++ b/core/sound/sound.c
+@@ -38,6 +38,7 @@
+  ****************************************************************************************/
+ 
+ #include "shared.h"
++#include "rf_state.h"
+ #include "blip_buf.h"
+ 
+ int8 audio_hard_disable = 0;
+@@ -564,7 +565,7 @@ int sound_context_save(uint8 *state)
+     save_param(&config.opll, sizeof(config.opll));
+     if (config.opll)
+     {
+-      save_param(&opll, sizeof(opll));
++      RF_SAVE(opll, rf_opll);
+       save_param(&opll_accm, sizeof(opll_accm));
+       save_param(&opll_sample, sizeof(opll_sample));
+       save_param(&opll_cycles, sizeof(opll_cycles));
+@@ -573,7 +574,7 @@ int sound_context_save(uint8 *state)
+     else
+ #endif
+     {
+-      save_param(YM2413GetContextPtr(),YM2413GetContextSize());
++      bufferptr += rf_canon_save(&state[bufferptr], YM2413GetContextPtr(), rf_ym2413, rf_ym2413_CANON_SZ, YM2413GetContextSize());
+     }
+   }
+ 
+@@ -617,7 +618,7 @@ int sound_context_load(uint8 *state)
+     load_param(&config_opll, sizeof(config_opll));
+     if (config_opll)
+     {
+-      load_param(&opll, sizeof(opll));
++      RF_LOAD(opll, rf_opll);
+       OPLL_Restore(&opll);
+       load_param(&opll_accm, sizeof(opll_accm));
+       load_param(&opll_sample, sizeof(opll_sample));
+@@ -628,7 +629,7 @@ int sound_context_load(uint8 *state)
+     else
+ #endif
+     {
+-      load_param(YM2413GetContextPtr(),YM2413GetContextSize());
++      bufferptr += rf_canon_load(YM2413GetContextPtr(), &state[bufferptr], rf_ym2413, rf_ym2413_CANON_SZ, YM2413GetContextSize());
+     }
+   }
+ 
+diff --git a/core/sound/ym2612.c b/core/sound/ym2612.c
+index 4c881cf..3ae7dee 100644
+--- a/core/sound/ym2612.c
++++ b/core/sound/ym2612.c
+@@ -148,6 +148,7 @@
+ /************************************************************************/
+ 
+ #include "shared.h"
++#include "rf_state.h"
+ 
+ /* envelope generator */
+ #define ENV_BITS    10
+@@ -2222,7 +2223,7 @@ int YM2612LoadContext(unsigned char *state)
+   int bufferptr = 0;
+ 
+   /* restore YM2612 context */
+-  load_param(&ym2612, sizeof(ym2612));
++  RF_LOAD(ym2612, rf_ym2612);
+ 
+   /* validate state used as table indexes */
+   ym2612.OPN.LFO_PM &= 0x1f;
+@@ -2277,7 +2278,7 @@ int YM2612SaveContext(unsigned char *state)
+   int bufferptr = 0;
+ 
+   /* save YM2612 context */
+-  save_param(&ym2612, sizeof(ym2612));
++  RF_SAVE(ym2612, rf_ym2612);
+ 
+   /* save DT table index for each channel slots */
+   for (c=0; c<6; c++)
+diff --git a/core/state.c b/core/state.c
+index f830763..5803b76 100644
+--- a/core/state.c
++++ b/core/state.c
+@@ -37,8 +37,10 @@
+  ****************************************************************************************/
+ 
+ #include "shared.h"
++#include "rf_state.h"
+ 
+ int8 fast_savestates = false;
++int rf_state_native = 0;   /* 1: formato antigo do Switch (states locais de antes) */
+ int8 reset_do_not_clear_buffers = false;
+ 
+ int state_load(unsigned char *state)
+@@ -160,7 +162,7 @@ int state_load(unsigned char *state)
+   }
+ 
+   /* Z80 */ 
+-  load_param(&Z80, sizeof(Z80_Regs));
++  RF_LOAD(Z80, rf_z80);
+   Z80.irq_callback = z80_irq_callback;
+ 
+   /* Extra HW */
+@@ -259,7 +261,7 @@ int state_save(unsigned char *state)
+   }
+ 
+   /* Z80 */ 
+-  save_param(&Z80, sizeof(Z80_Regs));
++  RF_SAVE(Z80, rf_z80);
+ 
+   /* External HW */
+   if (system_hw == SYSTEM_MCD)

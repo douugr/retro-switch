@@ -25,7 +25,7 @@ No games or BIOS files are included: use dumps of cartridges, discs and consoles
 - **Game menu (−):** a panel that slides in from the left with Continue, Save state, Load state, Achievements, Image, Reset and Quit, plus the PSX32 extras.
 - **Save states:** three slots plus an autosave when you leave the game, each with a **picture of the moment**. "Continue where you left off?" when a game opens.
 - **Image filters:** sharp pixels, smooth, **CRT TV** and **CRT TV with a curved screen**. This is the same shader as on the iPad: scanlines that widen on bright colors, a phosphor mask and composite-video blending. The Image page previews each filter live behind the menu.
-- **Cloud saves:** in-game saves (cartridge saves and PS1 memory cards) sync with a **private GitHub repository** of yours. It is the same repository and the same file paths as the iPad apps, matched by the ROM's fingerprint (the RetroAchievements hash), so file names can differ between devices.
+- **Cloud saves:** in-game saves (cartridge saves and PS1 memory cards) sync with a **private GitHub repository** of yours. It is the same repository and the same file paths as the iPad apps, matched by the ROM's fingerprint (the RetroAchievements hash), so file names can differ between devices. Save states in slots 1 to 3 sync as well, compressed, and load on either machine: a state saved on the iPad continues on the Switch and the other way around.
   - A save is downloaded when a game opens and uploaded after you leave it.
   - If a save changed on both sides, the app asks which one to keep. Every version stays in the repository history.
   - Setup: create a private repository and a fine-grained token with *Contents: Read and write* for it. Paste both in the "Cloud saves" section of the upload page (the setup is shared by the three apps), or copy `repo=` / `token=` to `/retrocloud/config.ini`.
@@ -56,6 +56,7 @@ The first build downloads the core at a pinned commit, plus rcheevos, the fonts,
 The code is organized like this:
 
 - `common/` holds what the three apps share: graphics (OpenGL ES 2 through SDL2 + Mesa), the screens and menus, save states, cloud saves, RetroAchievements, the upload server and patches.
+- `MD16/patches/` and `SNES16/patches/` make Genesis Plus GX and Snes9x 2005 write their save states in the same layout as the 32-bit iPad build (a few structs change size with 64-bit pointers). `layout.py` generates the conversion tables from the struct layouts clang reports for both targets. Old Switch states still load.
 - Each app's `source/main.cpp` only describes its core and its look.
 
 ## Licenses

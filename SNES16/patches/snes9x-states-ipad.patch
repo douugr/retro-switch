@@ -1,0 +1,382 @@
+diff --git a/libretro.c b/libretro.c
+index f64b71c..ac2d4f0 100644
+--- a/libretro.c
++++ b/libretro.c
+@@ -11,6 +11,7 @@
+ #include "spc7110.h"
+ #include "srtc.h"
+ #include "sa1.h"
++#include "rf_state.h"
+ 
+ #ifdef PSP
+ #include <pspkernel.h>
+@@ -822,7 +823,8 @@ void retro_reset(void)
+    S9xSoftReset();
+ }
+ 
+-size_t retro_serialize_size(void)
++/* Tamanho no layout nativo (o formato antigo dos states do Switch) */
++static size_t rf_native_size(void)
+ {
+    return sizeof(CPU) + sizeof(ICPU) + sizeof(PPU) + sizeof(DMA) +
+           0x10000 + 0x20000 + 0x20000 + 0x8000 +
+@@ -834,6 +836,18 @@ size_t retro_serialize_size(void)
+           sizeof(SA1) + sizeof(s7r) + sizeof(rtc_f9);
+ }
+ 
++size_t retro_serialize_size(void)
++{
++   return RF_SIZE(CPU, rf_cpu) + RF_SIZE(ICPU, rf_icpu) + sizeof(PPU) + sizeof(DMA) +
++          0x10000 + 0x20000 + 0x20000 + 0x8000 +
++#ifndef USE_BLARGG_APU
++          sizeof(APU) + RF_SIZE(IAPU, rf_iapu) + 0x10000 + RF_SIZE(SoundData, rf_sound) +
++#else
++          SPC_SAVE_STATE_BLOCK_SIZE +
++#endif
++          RF_SIZE(SA1, rf_sa1) + sizeof(s7r) + RF_SIZE(rtc_f9, rf_rtc);
++}
++
+ bool retro_serialize(void* data, size_t size)
+ {
+    int32_t i;
+@@ -847,10 +861,8 @@ bool retro_serialize(void* data, size_t size)
+ #endif
+    S9xUpdateRTC();
+    S9xSRTCPreSaveState();
+-   memcpy(buffer, &CPU, sizeof(CPU));
+-   buffer += sizeof(CPU);
+-   memcpy(buffer, &ICPU, sizeof(ICPU));
+-   buffer += sizeof(ICPU);
++   RF_PUT(CPU, rf_cpu);
++   RF_PUT(ICPU, rf_icpu);
+    memcpy(buffer, &PPU, sizeof(PPU));
+    buffer += sizeof(PPU);
+    memcpy(buffer, &DMA, sizeof(DMA));
+@@ -866,12 +878,29 @@ bool retro_serialize(void* data, size_t size)
+ #ifndef USE_BLARGG_APU
+    memcpy(buffer, &APU, sizeof(APU));
+    buffer += sizeof(APU);
++#if RF_CANON
++   {
++      /* ponteiros do SPC700 relativos à RAM dele (é o que o núcleo usa ao carregar) */
++      uint8_t *base = buffer;
++      unsigned i;
++      uint32_t v = RF_IAPU_RAM_BASE;
++      RF_PUT(IAPU, rf_iapu);
++      memcpy(base + RF_IAPU_RAM_CANON, &v, 4);
++      for (i = 0; i < sizeof(rf_iapu_ptrs) / sizeof(rf_iapu_ptrs[0]); i++)
++      {
++         uint8_t *ptr;
++         memcpy(&ptr, (uint8_t *)&IAPU + rf_iapu_ptrs[i].native, sizeof(ptr));
++         v = ptr ? RF_IAPU_RAM_BASE + (uint32_t)(ptr - IAPU.RAM) : 0;
++         memcpy(base + rf_iapu_ptrs[i].canon, &v, 4);
++      }
++   }
++#else
+    memcpy(buffer, &IAPU, sizeof(IAPU));
+    buffer += sizeof(IAPU);
++#endif
+    memcpy(buffer, IAPU.RAM, 0x10000);
+    buffer += 0x10000;
+-   memcpy(buffer, &SoundData, sizeof(SoundData));
+-   buffer += sizeof(SoundData);
++   RF_PUT(SoundData, rf_sound);
+ #else
+    S9xAPUSaveState(buffer);
+    buffer += SPC_SAVE_STATE_BLOCK_SIZE;
+@@ -880,11 +909,10 @@ bool retro_serialize(void* data, size_t size)
+    SA1.Registers.PC = SA1.PC - SA1.PCBase;
+    S9xSA1PackStatus();
+ 
+-   memcpy(buffer, &SA1, sizeof(SA1));
+-   buffer += sizeof(SA1);
++   RF_PUT(SA1, rf_sa1);
+    memcpy(buffer, &s7r, sizeof(s7r));
+    buffer += sizeof(s7r);
+-   memcpy(buffer, &rtc_f9, sizeof(rtc_f9));
++   RF_PUT(rtc_f9, rf_rtc);
+ 
+    return true;
+ }
+@@ -899,14 +927,18 @@ bool retro_unserialize(const void* data, size_t size)
+    uint32_t sa1_old_flags = SA1.Flags;
+    SSA1 sa1_state;
+ 
+-   if (size != retro_serialize_size())
++   /* o formato do iPad, ou o antigo deste aparelho (layout nativo) */
++   if (size == retro_serialize_size())
++      rf_native = 0;
++   else if (size == rf_native_size())
++      rf_native = 1;
++   else
+       return false;
+ 
+    S9xReset();
+-   memcpy(&CPU, buffer, sizeof(CPU));
+-   buffer += sizeof(CPU);
+-   memcpy(&ICPU, buffer, sizeof(ICPU));
+-   buffer += sizeof(ICPU);
++   memset(&sa1_state, 0, sizeof(sa1_state));
++   RF_GET(CPU, rf_cpu);
++   RF_GET(ICPU, rf_icpu);
+    memcpy(&PPU, buffer, sizeof(PPU));
+    buffer += sizeof(PPU);
+    memcpy(&DMA, buffer, sizeof(DMA));
+@@ -922,8 +954,30 @@ bool retro_unserialize(const void* data, size_t size)
+ #ifndef USE_BLARGG_APU
+    memcpy(&APU, buffer, sizeof(APU));
+    buffer += sizeof(APU);
+-   memcpy(&IAPU, buffer, sizeof(IAPU));
+-   buffer += sizeof(IAPU);
++#if RF_CANON
++   if (!rf_native)
++   {
++      const uint8_t *base = buffer;
++      unsigned i;
++      uint32_t ram32;
++      RF_GET(IAPU, rf_iapu);
++      memcpy(&ram32, base + RF_IAPU_RAM_CANON, 4);
++      IAPU.RAM = IAPU_RAM_current;
++      for (i = 0; i < sizeof(rf_iapu_ptrs) / sizeof(rf_iapu_ptrs[0]); i++)
++      {
++         uint32_t v;
++         uint8_t *ptr;
++         memcpy(&v, base + rf_iapu_ptrs[i].canon, 4);
++         ptr = v ? IAPU_RAM_current + (int32_t)(v - ram32) : NULL;
++         memcpy((uint8_t *)&IAPU + rf_iapu_ptrs[i].native, &ptr, sizeof(ptr));
++      }
++   }
++   else
++#endif
++   {
++      memcpy(&IAPU, buffer, sizeof(IAPU));
++      buffer += sizeof(IAPU);
++   }
+    IAPU_RAM_offset = IAPU_RAM_current - IAPU.RAM;
+    IAPU.PC += IAPU_RAM_offset;
+    IAPU.DirectPage += IAPU_RAM_offset;
+@@ -932,15 +986,13 @@ bool retro_unserialize(const void* data, size_t size)
+    IAPU.RAM = IAPU_RAM_current;
+    memcpy(IAPU.RAM, buffer, 0x10000);
+    buffer += 0x10000;
+-   memcpy(&SoundData, buffer, sizeof(SoundData));
+-   buffer += sizeof(SoundData);
++   RF_GET(SoundData, rf_sound);
+ #else
+    S9xAPULoadState(buffer);
+    buffer += SPC_SAVE_STATE_BLOCK_SIZE;
+ #endif
+ 
+-   memcpy(&sa1_state, buffer, sizeof(sa1_state));
+-   buffer += sizeof(sa1_state);
++   RF_GET(sa1_state, rf_sa1);
+ 
+    /* SA1 state must be restored 'by hand' */
+    SA1.Flags               = sa1_state.Flags;
+@@ -956,7 +1008,7 @@ bool retro_unserialize(const void* data, size_t size)
+ 
+    memcpy(&s7r, buffer, sizeof(s7r));
+    buffer += sizeof(s7r);
+-   memcpy(&rtc_f9, buffer, sizeof(rtc_f9));
++   RF_GET(rtc_f9, rf_rtc);
+ 
+    S9xFixSA1AfterSnapshotLoad();
+    SA1.Flags |= sa1_old_flags & (TRACE_FLAG);
+diff --git a/source/rf_state.h b/source/rf_state.h
+new file mode 100644
+index 0000000..ce95e7f
+--- /dev/null
++++ b/source/rf_state.h
+@@ -0,0 +1,192 @@
++/* Save states iguais no iPad (armv7, 32 bits) e no Switch (arm64).
++ * Seis structs do núcleo vão crus para o state e mudam de layout com ponteiros e `long` de 8 bytes.
++ * No Switch eles são gravados no layout do iPad: ponteiros zerados (o núcleo os refaz ao carregar),
++ * `long` com 4 bytes, e os ponteiros do SPC700 (IAPU) relativos à RAM dele, como o núcleo espera.
++ * States antigos deste Switch (tamanho do formato nativo) continuam abrindo. */
++#ifndef RF_STATE_H
++#define RF_STATE_H
++#include <stdint.h>
++#include <string.h>
++#include <stddef.h>
++
++typedef struct { unsigned int native, canon, size; } rf_run;
++typedef struct { unsigned int native, canon; } rf_long;
++/* SCPUState: 128 bytes no Switch, 80 bytes no formato do iPad (armv7) */
++static const rf_run rf_cpu[] = {
++  {0, 0, 10},
++  {48, 28, 4},
++  {104, 56, 5},
++  {112, 64, 6},
++  {120, 72, 8},
++  {0, 0, 0}
++};
++static const rf_long rf_cpu_longs[] = {
++  {56, 32},
++  {64, 36},
++  {72, 40},
++  {80, 44},
++  {88, 48},
++  {96, 52},
++};
++#define rf_cpu_NLONGS 6
++#define rf_cpu_LONGS rf_cpu_longs
++#define rf_cpu_NATIVE_SZ 128
++#define rf_cpu_CANON_SZ 80
++/* SICPU: 64 bytes no Switch, 52 bytes no formato do iPad (armv7) */
++static const rf_run rf_icpu[] = {
++  {16, 8, 21},
++  {40, 32, 20},
++  {0, 0, 0}
++};
++#define rf_icpu_NLONGS 0
++#define rf_icpu_LONGS NULL
++#define rf_icpu_NATIVE_SZ 64
++#define rf_icpu_CANON_SZ 52
++/* SIAPU: 80 bytes no Switch, 60 bytes no formato do iPad (armv7) */
++static const rf_run rf_iapu[] = {
++  {8, 4, 1},
++  {10, 6, 6},
++  {32, 20, 2},
++  {36, 24, 4},
++  {56, 36, 7},
++  {64, 44, 16},
++  {0, 0, 0}
++};
++#define rf_iapu_NLONGS 0
++#define rf_iapu_LONGS NULL
++#define rf_iapu_NATIVE_SZ 80
++#define rf_iapu_CANON_SZ 60
++/* SSoundData: 1448 bytes no Switch, 1284 bytes no formato do iPad (armv7) */
++static const rf_run rf_sound[] = {
++  {0, 0, 49},
++  {52, 52, 10},
++  {64, 64, 66},
++  {144, 136, 12},
++  {168, 152, 10},
++  {180, 164, 15},
++  {200, 180, 25},
++  {228, 208, 10},
++  {240, 220, 66},
++  {320, 292, 12},
++  {344, 308, 10},
++  {356, 320, 15},
++  {376, 336, 25},
++  {404, 364, 10},
++  {416, 376, 66},
++  {496, 448, 12},
++  {520, 464, 10},
++  {532, 476, 15},
++  {552, 492, 25},
++  {580, 520, 10},
++  {592, 532, 66},
++  {672, 604, 12},
++  {696, 620, 10},
++  {708, 632, 15},
++  {728, 648, 25},
++  {756, 676, 10},
++  {768, 688, 66},
++  {848, 760, 12},
++  {872, 776, 10},
++  {884, 788, 15},
++  {904, 804, 25},
++  {932, 832, 10},
++  {944, 844, 66},
++  {1024, 916, 12},
++  {1048, 932, 10},
++  {1060, 944, 15},
++  {1080, 960, 25},
++  {1108, 988, 10},
++  {1120, 1000, 66},
++  {1200, 1072, 12},
++  {1224, 1088, 10},
++  {1236, 1100, 15},
++  {1256, 1116, 25},
++  {1284, 1144, 10},
++  {1296, 1156, 66},
++  {1376, 1228, 12},
++  {1400, 1244, 10},
++  {1412, 1256, 15},
++  {1432, 1272, 12},
++  {0, 0, 0}
++};
++#define rf_sound_NLONGS 0
++#define rf_sound_LONGS NULL
++#define rf_sound_NATIVE_SZ 1448
++#define rf_sound_CANON_SZ 1284
++/* SSA1: 65680 bytes no Switch, 32868 bytes no formato do iPad (armv7) */
++static const rf_run rf_sa1[] = {
++  {8, 4, 5},
++  {16, 12, 17},
++  {80, 52, 4},
++  {65640, 32832, 36},
++  {0, 0, 0}
++};
++#define rf_sa1_NLONGS 0
++#define rf_sa1_LONGS NULL
++#define rf_sa1_NATIVE_SZ 65680
++#define rf_sa1_CANON_SZ 32868
++/* S7RTC: 32 bytes no Switch, 24 bytes no formato do iPad (armv7) */
++static const rf_run rf_rtc[] = {
++  {0, 0, 20},
++  {0, 0, 0}
++};
++static const rf_long rf_rtc_longs[] = {
++  {24, 20},
++};
++#define rf_rtc_NLONGS 1
++#define rf_rtc_LONGS rf_rtc_longs
++#define rf_rtc_NATIVE_SZ 32
++#define rf_rtc_CANON_SZ 24
++
++#if defined(__aarch64__) || defined(__LP64__)
++#define RF_CANON 1
++#else
++#define RF_CANON 0
++#endif
++
++static int rf_native;   /* 1 = lendo um state antigo, no layout nativo */
++
++static uint8_t *rf_put(uint8_t *dst, const void *src, const rf_run *r, const rf_long *l, int nl, size_t canon, size_t native)
++{
++   int i;
++   if (!RF_CANON) { memcpy(dst, src, native); return dst + native; }
++   memset(dst, 0, canon);
++   for (; r->size; r++) memcpy(dst + r->canon, (const uint8_t *)src + r->native, r->size);
++   for (i = 0; i < nl; i++)
++   {
++      long v; int32_t w;
++      memcpy(&v, (const uint8_t *)src + l[i].native, sizeof(v));
++      w = (int32_t)v;
++      memcpy(dst + l[i].canon, &w, 4);
++   }
++   return dst + canon;
++}
++
++static const uint8_t *rf_get(void *dst, const uint8_t *src, const rf_run *r, const rf_long *l, int nl, size_t canon, size_t native)
++{
++   int i;
++   if (!RF_CANON || rf_native) { memcpy(dst, src, native); return src + native; }
++   for (; r->size; r++) memcpy((uint8_t *)dst + r->native, src + r->canon, r->size);
++   for (i = 0; i < nl; i++)
++   {
++      int32_t w; long v;
++      memcpy(&w, src + l[i].canon, 4);
++      v = w;
++      memcpy((uint8_t *)dst + l[i].native, &v, sizeof(v));
++   }
++   return src + canon;
++}
++
++#define RF_CHECK(var, n) ((void)sizeof(char[(!RF_CANON || sizeof(var) == n##_NATIVE_SZ) ? 1 : -1]))
++#define RF_PUT(var, n) (RF_CHECK(var, n), buffer = rf_put(buffer, &(var), n, n##_LONGS, n##_NLONGS, n##_CANON_SZ, sizeof(var)))
++#define RF_GET(var, n) (RF_CHECK(var, n), buffer = rf_get(&(var), buffer, n, n##_LONGS, n##_NLONGS, n##_CANON_SZ, sizeof(var)))
++#define RF_SIZE(var, n) (RF_CANON ? (size_t)n##_CANON_SZ : sizeof(var))
++
++/* Ponteiros do SPC700 no formato do iPad: u32 nas posições do struct de 32 bits, relativos a uma RAM fictícia */
++#define RF_IAPU_RAM_BASE 0x10000000u
++static const struct { unsigned int canon; size_t native; } rf_iapu_ptrs[] = {
++   { 0, offsetof(SIAPU, PC) }, { 16, offsetof(SIAPU, DirectPage) },
++   { 28, offsetof(SIAPU, WaitAddress1) }, { 32, offsetof(SIAPU, WaitAddress2) },
++};
++#define RF_IAPU_RAM_CANON 12
++#endif
